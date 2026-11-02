@@ -2,6 +2,9 @@
 #import "NGControllers.h"
 #import "NGTabBarController.h"
 #import "NGTheme.h"
+#import "NGTelegram.h"
+#import "NGLogin.h"
+#import "NGModel.h"
 
 @implementation NGAppDelegate
 
@@ -10,6 +13,27 @@
     self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
     self.window.backgroundColor = [UIColor whiteColor];
 
+    if ([NGTelegram shared].isAuthorized) {
+        [self showMain];
+    } else {
+        __weak NGAppDelegate *weakSelf = self;
+        self.window.rootViewController = NGLoginScreen(^{ [weakSelf showMain]; });
+    }
+    [self.window makeKeyAndVisible];
+    return YES;
+}
+
+// The signed-in account's name and phone replace the demo profile; the chat
+// list is still the demo data until the dialogs are loaded from the server.
+- (void)showMain {
+    NSDictionary *user = [NGTelegram shared].currentUser;
+    if (user) {
+        NGUser *me = [NGDemoData shared].me;
+        me.firstName = user[@"first_name"] ?: @"";
+        me.lastName = user[@"last_name"] ?: @"";
+        if ([user[@"phone"] length]) me.phone = [@"+" stringByAppendingString:user[@"phone"]];
+        me.username = user[@"username"] ?: @"";
+    }
     NSMutableArray *navs = [NSMutableArray array];
     for (UIViewController *root in @[ [NGContactsController new], [NGCallsController new], [NGChatListController new], [NGSettingsController new] ]) {
         [navs addObject:[[UINavigationController alloc] initWithRootViewController:root]];
@@ -28,8 +52,5 @@
     tabs.selectedIndex = 2;
 
     self.window.rootViewController = tabs;
-    [self.window makeKeyAndVisible];
-    return YES;
 }
-
 @end
