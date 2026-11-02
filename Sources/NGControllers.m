@@ -4,6 +4,7 @@
 #import "NGViews.h"
 #import "NGOriginal.h"
 #import "NGTabBarController.h"
+#import "NGSettingsScreens.h"
 #import <QuartzCore/QuartzCore.h>
 
 static void NGPrepareTable(UITableView *table, UIColor *background) {
@@ -18,7 +19,9 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
 
 #pragma mark - List base
 
-@implementation NGListController
+@implementation NGListController {
+    BOOL _hasBackButton;
+}
 
 - (void)viewDidLoad {
     [super viewDidLoad];
@@ -34,6 +37,16 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     [self.navigationController setNavigationBarHidden:YES animated:animated];
+    // A pushed list leads with the bar's glass back button.
+    NSArray *stack = self.navigationController.viewControllers;
+    if (stack.count > 1 && stack[0] != self && !_hasBackButton) {
+        _hasBackButton = YES;
+        self.header.leftButtons = @[ [NGGlassButton iconButton:@"nav_back" tint:NGGlassButtonTintGeneric target:self action:@selector(ng_back)] ];
+    }
+}
+
+- (void)ng_back {
+    [self.navigationController popViewControllerAnimated:YES];
 }
 
 - (void)viewDidLayoutSubviews {
@@ -557,7 +570,6 @@ static UIImage *NGCornersImage(BOOL top, BOOL bottom) {
                 @[ @"settings_data", green, @"Данные и память", @"" ],
                 @[ @"settings_appearance", lightBlue, @"Оформление", @"" ],
                 @[ @"settings_power", orange, @"Энергосбережение", @"Выкл." ],
-                @[ @"settings_privacy", gray, @"Настройки Pure", @"" ],
                 @[ @"settings_language", purple, @"Язык", @"Русский" ],
             ],
             @[
@@ -625,13 +637,35 @@ static UIImage *NGCornersImage(BOOL top, BOOL bottom) {
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    if (indexPath.section == 1 && indexPath.row == 0) {
-        NGChat *saved = nil;
-        for (NGChat *chat in [NGDemoData shared].chats) {
-            if (chat.kind == NGChatKindSaved) saved = chat;
+    UIViewController *next = nil;
+    NSInteger section = indexPath.section, row = indexPath.row;
+    if (section == 0) {
+        next = NGProfileScreen();
+    } else if (section == 1) {
+        if (row == 0) {
+            for (NGChat *chat in [NGDemoData shared].chats) {
+                if (chat.kind == NGChatKindSaved) next = [[NGChatController alloc] initWithChat:chat];
+            }
+        } else if (row == 1) {
+            next = NGRecentCallsScreen();
+        } else if (row == 2) {
+            next = NGDevicesScreen();
+        } else {
+            next = NGChatFoldersScreen();
         }
-        if (saved) [self.navigationController pushViewController:[[NGChatController alloc] initWithChat:saved] animated:YES];
+    } else if (section == 2) {
+        switch (row) {
+            case 0: next = NGNotificationsScreen(); break;
+            case 1: next = NGPrivacyScreen(); break;
+            case 2: next = NGDataAndStorageScreen(); break;
+            case 3: next = NGAppearanceScreen(); break;
+            case 4: next = NGPowerSavingScreen(); break;
+            default: next = NGLanguageScreen(); break;
+        }
+    } else {
+        next = NGSupportScreen(_sections[section][row][2]);
     }
+    if (next) [self.navigationController pushViewController:next animated:YES];
 }
 
 @end
