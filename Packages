@@ -1,14 +1,14 @@
 Package: com.nogram.legacy
-Version: 0.7.0
+Version: 0.8.0
 Architecture: iphoneos-arm
 Maintainer: nogram
-Installed-Size: 1276
+Installed-Size: 1456
 Depends: firmware (>= 6.0)
-Filename: debs/com.nogram.legacy_0.7.0_iphoneos-arm.deb
-Size: 627742
-MD5sum: 77c18d4f85207a3f22fd5afa6a9ac6d6
-SHA1: 8bb4a7c2ce62261e5771b81c6f1ed960cfe35065
-SHA256: 827866c403039cba0db69998d4e9e547c7ec61b32a9a83bbcee72024ec699079
+Filename: debs/com.nogram.legacy_0.8.0_iphoneos-arm.deb
+Size: 696860
+MD5sum: 1a8ec8c080accf6ec18b5b2d25349a1e
+SHA1: 783448cdfc8fc4a7d18a2cf358bf8dbaa12e2ed5
+SHA256: 769a0e0e77d012936bee3113004686ad0cd358f0ab08c527716701a485ef3693
 Section: Social
 Homepage: https://an0therlabs.github.io/nogram/
 Description: Telegram-style demo client for iOS 6 (UI demo with local data).
