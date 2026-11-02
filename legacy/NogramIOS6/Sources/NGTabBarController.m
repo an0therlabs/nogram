@@ -1,8 +1,17 @@
 #import "NGTabBarController.h"
 #import "NGTheme.h"
 #import "NGOriginal.h"
+#import "NGGlass.h"
 
-const CGFloat NGTabBarHeight = 49.0f;
+// TabBarComponent / TabBarItemsLayout / TabBarControllerNode, horizontal,
+// regular (not compact), no search, on a phone without a home indicator.
+static const CGFloat NGTabBarInnerInset = 4.0f;    // tabBarInnerInset
+static const CGFloat NGTabBarItemLength = 56.0f;   // tabBarItemLength
+static const CGFloat NGTabBarBottomInset = 8.0f;   // panelsBottomInset with no bottom safe area
+static const CGFloat NGTabBarSideInset = 20.0f;    // tabBarBottomInset <= 28 → 20
+
+// The space a root list must leave under its content.
+const CGFloat NGTabBarHeight = 72.0f;   // item 56 + inner insets 2 x 4 + bottom inset 8
 
 @implementation NGTabBarItem
 
@@ -16,61 +25,55 @@ const CGFloat NGTabBarHeight = 49.0f;
 
 @end
 
-// tabBarItemImage(_:title:backgroundColor:tintColor:horizontal: false, imageMode:)
-// imageMode draws only the icon, otherwise only the title; the node stacks both.
-static UIImage *NGTabBarItemImage(UIImage *image, NSString *title, UIColor *tintColor, BOOL imageMode, CGFloat *contentWidth) {
-    UIFont *font = [NGTheme mediumFont:10.0f];
-    CGSize titleSize = [title sizeWithFont:font];
-    CGSize imageSize = image ? image.size : CGSizeZero;
-    CGSize size = CGSizeMake(MAX(1.0f, MAX(ceilf(titleSize.width), imageSize.width)), 45.0f);
-    if (contentWidth) *contentWidth = imageSize.width;
+static UIFont *NGTabTitleFont(void) { return [NGTheme semiboldFont:10.0f]; }
+static UIColor *NGTabTextColor(void) { return NGHexA(0x000000, 0.8f); }   // rootController.tabBar.textColor
 
-    UIGraphicsBeginImageContextWithOptions(size, NO, 0.0f);
-    CGContextRef context = UIGraphicsGetCurrentContext();
-    if (image && imageMode) {
-        CGFloat px = 1.0f / [UIScreen mainScreen].scale;
-        CGFloat x = floorf((size.width - imageSize.width) / 2.0f / px) * px;
-        CGRect imageRect = CGRectMake(x, 0.0f, imageSize.width, imageSize.height);
-        CGContextSaveGState(context);
-        CGContextTranslateCTM(context, CGRectGetMidX(imageRect), CGRectGetMidY(imageRect));
-        CGContextScaleCTM(context, 1.0f, -1.0f);
-        CGContextTranslateCTM(context, -CGRectGetMidX(imageRect), -CGRectGetMidY(imageRect));
-        CGContextClipToMask(context, imageRect, image.CGImage);
-        CGContextSetFillColorWithColor(context, tintColor.CGColor);
-        CGContextFillRect(context, imageRect);
-        CGContextRestoreGState(context);
-    }
-    if (!imageMode) {
-        CGFloat px = 1.0f / [UIScreen mainScreen].scale;
-        [tintColor setFill];
-        [title drawAtPoint:CGPointMake(floorf((size.width - titleSize.width) / 2.0f / px) * px, size.height - titleSize.height - 1.0f) withFont:font];
-    }
-    UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    return result;
-}
-
+// TabBarComponent.ItemComponent: icon at y 3 (static image) or a 48pt
+// animation at y -4, title 8pt above the bottom, badge right of centre.
 @interface NGTabBarItemView : UIView
-@property (nonatomic, strong) UIImageView *imageView;
-@property (nonatomic, strong) UIImageView *textImageView;
+@property (nonatomic, strong) UIImageView *iconView;
 @property (nonatomic, strong) UIImageView *animationView;
-@property (nonatomic, strong) UIImageView *badgeBackground;
+@property (nonatomic, strong) UILabel *titleLabel;
+@property (nonatomic, strong) UIView *badgeView;
 @property (nonatomic, strong) UILabel *badgeLabel;
 @property (nonatomic, strong) NSArray *animationFrames;
 @end
 
 @implementation NGTabBarItemView
-@end
 
-@interface NGTabBarController ()
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGSize size = self.bounds.size;
+    CGSize iconSize = self.iconView.image.size;
+    self.iconView.frame = CGRectMake(floorf((size.width - iconSize.width) * 0.5f), 3.0f, iconSize.width, iconSize.height);
+    self.animationView.frame = CGRectMake(floorf((size.width - 48.0f) * 0.5f), -4.0f, 48.0f, 48.0f);
+    CGSize titleSize = [self.titleLabel.text sizeWithFont:self.titleLabel.font];
+    titleSize = CGSizeMake(ceilf(titleSize.width), ceilf(titleSize.height));
+    self.titleLabel.frame = CGRectMake(floorf((size.width - titleSize.width) * 0.5f), size.height - 8.0f - titleSize.height, titleSize.width, titleSize.height);
+
+    if (!self.badgeView.hidden) {
+        // TextBadgeComponent(font: regular 13, insets: (0, 5, 1, 5))
+        CGSize textSize = [self.badgeLabel.text sizeWithFont:self.badgeLabel.font];
+        textSize = CGSizeMake(ceilf(textSize.width), ceilf(textSize.height));
+        CGFloat height = textSize.height + 1.0f;
+        CGFloat width = MAX(height, textSize.width + 10.0f);
+        CGFloat contentWidth = 25.0f;
+        self.badgeView.frame = CGRectMake(floorf(size.width / 2.0f) + contentWidth - width - 1.0f, 5.0f, width, height);
+        self.badgeView.layer.cornerRadius = height * 0.5f;
+        self.badgeLabel.frame = CGRectMake(floorf((width - textSize.width) * 0.5f), 0.0f, textSize.width, textSize.height);
+    }
+}
+
 @end
 
 @implementation NGTabBarController {
     UIView *_contentView;
     UIView *_bar;
-    UIView *_separator;
+    NGGlassView *_background;
+    UIView *_lens;
     NSMutableArray *_itemViews;
     BOOL _barHidden;
+    BOOL _layoutDone;
 }
 
 - (void)viewDidLoad {
@@ -80,12 +83,15 @@ static UIImage *NGTabBarItemImage(UIImage *image, NSString *title, UIColor *tint
     _contentView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [self.view addSubview:_contentView];
 
-    // rootController.tabBar: backgroundColor 0xf7f7f7 (opaque form), separatorColor 0xb2b2b2.
     _bar = [[UIView alloc] initWithFrame:CGRectZero];
-    _bar.backgroundColor = NGHex(0xf7f7f7);
-    _separator = [[UIView alloc] initWithFrame:CGRectZero];
-    _separator.backgroundColor = NGHex(0xb2b2b2);
-    [_bar addSubview:_separator];
+    _background = [[NGGlassView alloc] initWithFrame:CGRectZero];
+    _background.userInteractionEnabled = NO;
+    [_bar addSubview:_background];
+    // LiquidLensView, legacy: a capsule tinted black at 7.5% under the selected item.
+    _lens = [[UIView alloc] initWithFrame:CGRectZero];
+    _lens.backgroundColor = [UIColor colorWithWhite:0.0f alpha:0.075f];
+    _lens.userInteractionEnabled = NO;
+    [_background.contentView addSubview:_lens];
     [_bar addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(barTapped:)]];
     [self.view addSubview:_bar];
 
@@ -113,22 +119,19 @@ static UIImage *NGTabBarItemImage(UIImage *image, NSString *title, UIColor *tint
         NGTabBarItem *item = _items[i];
         NGTabBarItemView *view = [[NGTabBarItemView alloc] initWithFrame:CGRectZero];
         view.userInteractionEnabled = NO;
-        view.imageView = [[UIImageView alloc] initWithFrame:CGRectZero];
-        view.textImageView = [[UIImageView alloc] initWithFrame:CGRectZero];
+        view.iconView = [[UIImageView alloc] initWithFrame:CGRectZero];
         view.animationView = [[UIImageView alloc] initWithFrame:CGRectZero];
         view.animationFrames = [self framesForAnimation:item.animationName];
-        // badgeBackgroundColor 0xff3b30, generateStretchableFilledCircleImage(diameter: 18)
-        view.badgeBackground = [[UIImageView alloc] initWithImage:NGBadgeBackgroundImage(NGHex(0xff3b30), 18.0f)];
+        view.titleLabel = [NGTheme labelWithFont:NGTabTitleFont() color:NGTabTextColor()];
+        view.titleLabel.text = item.title;
+        view.badgeView = [[UIView alloc] initWithFrame:CGRectZero];
+        view.badgeView.backgroundColor = NGHex(0xff3b30);   // badgeBackgroundColor
         view.badgeLabel = [NGTheme labelWithFont:[NGTheme regularFont:13.0f] color:[UIColor whiteColor]];
-        view.badgeLabel.textAlignment = NSTextAlignmentCenter;
-        [view addSubview:view.imageView];
-        [view addSubview:view.animationView];
-        [view addSubview:view.textImageView];
-        [view addSubview:view.badgeBackground];
-        [view.badgeBackground addSubview:view.badgeLabel];
-        [_bar addSubview:view];
+        [view.badgeView addSubview:view.badgeLabel];
+        for (UIView *v in @[ view.iconView, view.animationView, view.titleLabel, view.badgeView ]) [view addSubview:v];
+        [_background.contentView addSubview:view];
         [_itemViews addObject:view];
-        [self updateItemImageAtIndex:i];
+        [self updateItemAtIndex:i];
     }
     [self.view setNeedsLayout];
 }
@@ -144,33 +147,29 @@ static UIImage *NGTabBarItemImage(UIImage *image, NSString *title, UIColor *tint
     return frames.count ? frames : nil;
 }
 
-- (void)updateItemImageAtIndex:(NSUInteger)index {
+- (void)updateItemAtIndex:(NSUInteger)index {
     NGTabBarItem *item = _items[index];
     NGTabBarItemView *view = _itemViews[index];
     BOOL selected = index == _selectedIndex;
-    // rootController.tabBar: iconColor / textColor 0x959595, selected = accent.
-    UIColor *tint = selected ? [NGTheme accentColor] : NGHex(0x959595);
-    UIImage *icon = [UIImage imageNamed:item.imageName];
-    view.imageView.image = NGTabBarItemImage(icon, item.title, tint, YES, NULL);
-    view.textImageView.image = NGTabBarItemImage(icon, item.title, tint, NO, NULL);
+    // selectedTextColor = accent, textColor = black 0.8; the icon follows the text colour.
+    UIColor *tint = selected ? [NGTheme accentColor] : NGTabTextColor();
+    view.titleLabel.textColor = tint;
+    view.iconView.image = NGTintedAsset(item.imageName, tint);
     view.badgeLabel.text = item.badgeValue;
-    view.badgeBackground.hidden = item.badgeValue.length == 0;
+    view.badgeView.hidden = item.badgeValue.length == 0;
 
     if (view.animationFrames) {
-        // The animated icon replaces the static one; it rests on its first
-        // frame (tinted grey) and plays once when selected.
-        view.imageView.hidden = YES;
+        view.iconView.hidden = YES;
         view.animationView.hidden = NO;
         NSMutableArray *tinted = [NSMutableArray arrayWithCapacity:view.animationFrames.count];
         for (UIImage *frame in view.animationFrames) [tinted addObject:NGTintedImage(frame, tint)];
         view.animationView.image = selected ? [tinted lastObject] : tinted[0];
         view.animationView.animationImages = tinted;
     } else {
-        view.imageView.hidden = NO;
+        view.iconView.hidden = NO;
         view.animationView.hidden = YES;
     }
     [view setNeedsLayout];
-    [self.view setNeedsLayout];
 }
 
 - (void)setBadgeValue:(NSString *)value atIndex:(NSUInteger)index {
@@ -178,52 +177,93 @@ static UIImage *NGTabBarItemImage(UIImage *image, NSString *title, UIColor *tint
     NGTabBarItem *item = _items[index];
     if ((value.length == 0 && item.badgeValue.length == 0) || [value isEqualToString:item.badgeValue]) return;
     item.badgeValue = value;
-    if (self.isViewLoaded) [self updateItemImageAtIndex:index];
+    if (self.isViewLoaded) [self updateItemAtIndex:index];
+}
+
+// tabBarItemsLayout(axis: .horizontal, isCompact: false, ...)
+- (NSArray *)itemFramesForAvailableLength:(CGFloat)availableLength {
+    NSUInteger count = _itemViews.count;
+    CGFloat px = [NGTheme pixel];
+    CGFloat availableItemsLength = availableLength - NGTabBarInnerInset * 2.0f;
+    CGFloat equalLength = floorf(availableItemsLength / (CGFloat)count / px) * px;
+    NSMutableArray *unbound = [NSMutableArray array];
+    CGFloat total = 0.0f;
+    BOOL allFit = YES;
+    for (NGTabBarItemView *view in _itemViews) {
+        // ItemComponent, unconstrained: title width + 10 * 2
+        CGFloat width = ceilf([view.titleLabel.text sizeWithFont:NGTabTitleFont()].width) + 20.0f;
+        [unbound addObject:@(width)];
+        total += width;
+        if (width > equalLength) allFit = NO;
+    }
+    NSMutableArray *frames = [NSMutableArray array];
+    CGFloat position = NGTabBarInnerInset;
+    for (NSUInteger i = 0; i < count; i++) {
+        CGFloat length = allFit ? equalLength : floorf([unbound[i] floatValue] * (availableItemsLength / total) / px) * px;
+        [frames addObject:[NSValue valueWithCGRect:CGRectMake(position, NGTabBarInnerInset, length, NGTabBarItemLength)]];
+        position += length;
+    }
+    return frames;
+}
+
+// tabBarLensSelectionFrame, then the lens's visible capsule (inset 4).
+- (CGRect)lensFrameForItemFrame:(CGRect)itemFrame barSize:(CGSize)barSize {
+    if (itemFrame.size.width < itemFrame.size.height) {
+        itemFrame = CGRectInset(itemFrame, floorf((itemFrame.size.height * 1.2f - itemFrame.size.width) * -0.5f), 0.0f);
+    }
+    CGFloat length = itemFrame.size.width + NGTabBarInnerInset * 2.0f;
+    CGFloat origin = MAX(0.0f, MIN(itemFrame.origin.x - NGTabBarInnerInset, barSize.width - length));
+    return CGRectInset(CGRectMake(origin, 0.0f, length, barSize.height), 4.0f, 4.0f);
+}
+
+- (CGRect)barFrame {
+    CGFloat w = self.view.bounds.size.width, h = self.view.bounds.size.height;
+    CGFloat barWidth = MIN(500.0f, w - NGTabBarSideInset * 2.0f);
+    CGFloat barHeight = NGTabBarItemLength + NGTabBarInnerInset * 2.0f;
+    CGFloat y = _barHidden ? h : h - barHeight - NGTabBarBottomInset;
+    return CGRectMake(floorf((w - barWidth) * 0.5f), y, barWidth, barHeight);
 }
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
-    CGFloat w = self.view.bounds.size.width, h = self.view.bounds.size.height;
-    _bar.frame = CGRectMake(_barHidden ? -w : 0, h - NGTabBarHeight, w, NGTabBarHeight);
-    _separator.frame = CGRectMake(0, 0, w, [NGTheme pixel]);
-
-    // TabBarNode.updateLayout (vertical layout, no side insets)
-    NSUInteger count = _itemViews.count;
-    if (count == 0) return;
-    CGFloat distanceBetweenNodes = w / (CGFloat)count;
-    CGFloat internalWidth = distanceBetweenNodes * (CGFloat)(count - 1);
-    CGFloat leftNodeOriginX = (w - internalWidth) / 2.0f;
-    CGFloat px = [NGTheme pixel];
-    for (NSUInteger i = 0; i < count; i++) {
-        NGTabBarItemView *node = _itemViews[i];
-        CGSize nodeSize = node.textImageView.image.size;
-        CGFloat originX = floorf(leftNodeOriginX + (CGFloat)i * distanceBetweenNodes - nodeSize.width / 2.0f);
-        node.frame = CGRectMake(originX, 3.0f, nodeSize.width, nodeSize.height);
-        node.imageView.frame = node.bounds;
-        node.textImageView.frame = node.bounds;
-        node.animationView.frame = CGRectMake(floorf((nodeSize.width - 51.0f) / 2.0f / px) * px, -10.0f - px, 51.0f, 51.0f);
-
-        if (!node.badgeBackground.hidden) {
-            NSString *badge = node.badgeLabel.text;
-            CGSize badgeSize = [badge sizeWithFont:node.badgeLabel.font];
-            badgeSize = CGSizeMake(ceilf(badgeSize.width), ceilf(badgeSize.height));
-            BOOL single = badge.length == 1;
-            CGSize backgroundSize = CGSizeMake(single ? 18.0f : MAX(18.0f, badgeSize.width + 10.0f + 1.0f), 18.0f);
-            CGFloat contentWidth = 25.0f;
-            node.badgeBackground.frame = CGRectMake(floorf(nodeSize.width / 2.0f) + contentWidth - backgroundSize.width - 5.0f, -1.0f, backgroundSize.width, backgroundSize.height);
-            node.badgeLabel.frame = CGRectMake(floorf((backgroundSize.width - badgeSize.width) / 2.0f / px) * px, 1.0f, badgeSize.width, badgeSize.height);
-        }
+    _bar.frame = [self barFrame];
+    _background.frame = _bar.bounds;
+    [_background layoutIfNeeded];
+    NSArray *frames = [self itemFramesForAvailableLength:_bar.bounds.size.width];
+    for (NSUInteger i = 0; i < _itemViews.count; i++) {
+        NGTabBarItemView *view = _itemViews[i];
+        view.frame = [frames[i] CGRectValue];
+        [view setNeedsLayout];
     }
+    [self layoutLensAnimated:NO];
     [self layoutSelectedController];
+    _layoutDone = YES;
+}
+
+- (void)layoutLensAnimated:(BOOL)animated {
+    if (_selectedIndex >= _itemViews.count) return;
+    CGRect lens = [self lensFrameForItemFrame:[_itemViews[_selectedIndex] frame] barSize:_bar.bounds.size];
+    void (^apply)(void) = ^{
+        self->_lens.frame = lens;
+        self->_lens.layer.cornerRadius = lens.size.height * 0.5f;
+    };
+    if (animated) {
+        // TabBarControllerNode: a selection change animates with .spring(duration: 0.4).
+        [UIView animateWithDuration:0.4 delay:0 options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionBeginFromCurrentState animations:apply completion:nil];
+    } else {
+        apply();
+    }
 }
 
 - (void)barTapped:(UITapGestureRecognizer *)tap {
-    // TabBarNode.tapped(at:): the closest item by x.
-    CGPoint location = [tap locationInView:_bar];
+    // tabBarItemIndex(at:): the item under the point, else the nearest along x.
+    CGPoint location = [tap locationInView:_background.contentView];
     NSInteger closest = -1;
     CGFloat best = CGFLOAT_MAX;
     for (NSUInteger i = 0; i < _itemViews.count; i++) {
-        CGFloat distance = fabsf((float)(location.x - [_itemViews[i] center].x));
+        CGRect frame = [_itemViews[i] frame];
+        if (CGRectContainsPoint(frame, location)) { closest = (NSInteger)i; break; }
+        CGFloat distance = MIN(fabsf((float)(location.x - CGRectGetMinX(frame))), fabsf((float)(location.x - CGRectGetMaxX(frame))));
         if (distance < best) { best = distance; closest = (NSInteger)i; }
     }
     if (closest < 0) return;
@@ -233,9 +273,9 @@ static UIImage *NGTabBarItemImage(UIImage *image, NSString *title, UIColor *tint
         return;
     }
     self.selectedIndex = (NSUInteger)closest;
+    [self layoutLensAnimated:YES];
     NGTabBarItemView *view = _itemViews[(NSUInteger)closest];
     if (view.animationFrames) {
-        // playbackMode: .once
         view.animationView.animationDuration = view.animationFrames.count / 60.0;
         view.animationView.animationRepeatCount = 1;
         [view.animationView startAnimating];
@@ -246,8 +286,8 @@ static UIImage *NGTabBarItemImage(UIImage *image, NSString *title, UIColor *tint
     NSUInteger previous = _selectedIndex;
     _selectedIndex = selectedIndex;
     if (!self.isViewLoaded) return;
-    if (previous < _itemViews.count) [self updateItemImageAtIndex:previous];
-    if (selectedIndex < _itemViews.count) [self updateItemImageAtIndex:selectedIndex];
+    if (previous < _itemViews.count) [self updateItemAtIndex:previous];
+    if (selectedIndex < _itemViews.count) [self updateItemAtIndex:selectedIndex];
     [self showSelectedController];
 }
 
@@ -272,13 +312,13 @@ static UIImage *NGTabBarItemImage(UIImage *image, NSString *title, UIColor *tint
         UIViewController *top = ((UINavigationController *)selected).topViewController;
         _barHidden = top.hidesBottomBarWhenPushed;
     }
+    [self.view bringSubviewToFront:_bar];
     [self.view setNeedsLayout];
     [self layoutSelectedController];
 }
 
 - (void)layoutSelectedController {
-    UIViewController *selected = [self selectedController];
-    selected.view.frame = _contentView.bounds;
+    [self selectedController].view.frame = _contentView.bounds;
 }
 
 #pragma mark - Hiding with pushes
@@ -288,14 +328,9 @@ static UIImage *NGTabBarItemImage(UIImage *image, NSString *title, UIColor *tint
     BOOL hide = viewController.hidesBottomBarWhenPushed;
     if (hide == _barHidden) return;
     _barHidden = hide;
-    CGFloat w = self.view.bounds.size.width;
-    // The bar travels with the root controller, as UIKit's does on a push.
-    void (^move)(void) = ^{
-        CGRect f = self->_bar.frame;
-        f.origin.x = hide ? -w : 0;
-        self->_bar.frame = f;
-    };
-    if (animated) {
+    // TabBarControllerNode: a hidden bar sits below the screen's bottom edge.
+    void (^move)(void) = ^{ self->_bar.frame = [self barFrame]; };
+    if (animated && _layoutDone) {
         [UIView animateWithDuration:0.35 delay:0 options:UIViewAnimationOptionCurveEaseInOut animations:move completion:nil];
     } else {
         move();
