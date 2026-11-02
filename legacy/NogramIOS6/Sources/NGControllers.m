@@ -267,7 +267,7 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
 - (instancetype)init {
     if ((self = [super initWithStyle:UITableViewStylePlain])) {
         self.title = @"Контакты";
-        _contacts = [NGDemoData shared].contacts;
+        _contacts = [NGTelegram shared].isAuthorized ? @[] : [NGDemoData shared].contacts;
     }
     return self;
 }
@@ -288,6 +288,17 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
 
 - (void)cancel {
     [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+// With an account, the list is the account's contacts (contacts.getContacts).
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    if (![NGTelegram shared].isAuthorized) return;
+    [[NGTelegram shared] loadContacts:^(NSArray *users, NSString *error) {
+        if (!users) return;
+        self->_contacts = users;
+        [self.tableView reloadData];
+    }];
 }
 
 - (NSArray *)actions {
