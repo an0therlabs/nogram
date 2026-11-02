@@ -7,7 +7,7 @@
 #
 #  1. libSystem.tbd re-exports /usr/lib/system/liblaunch.dylib, but the SDK
 #     ships no stub for it ("file not found: liblaunch.dylib").
-#  2. libsystem_c.tbd does not list memcpy/memmove/memset, which clang emits
+#  2. libsystem_c.tbd does not list memcpy/memmove/memset/memcmp/bzero, which clang emits
 #     for struct copies and zeroing. On device they resolve through the
 #     libSystem umbrella whichever sub-library exports them (libsystem_c on
 #     iOS 6, libsystem_platform later), so listing them here is correct.
@@ -38,7 +38,9 @@ TBD
 fi
 
 LIBC="$SDK/usr/lib/system/libsystem_c.tbd"
-if ! grep -q ' _memcpy,' "$LIBC"; then
-    sed -i.bak 's/___memcpy_chk,/_memcpy, _memmove, _memset, ___memcpy_chk,/' "$LIBC" && rm -f "$LIBC.bak"
-fi
+for sym in _memcpy _memmove _memset _memcmp _bzero; do
+    if ! grep -q " $sym," "$LIBC"; then
+        sed -i.bak "s/___memcpy_chk,/$sym, ___memcpy_chk,/" "$LIBC" && rm -f "$LIBC.bak"
+    fi
+done
 echo "patched $SDK"

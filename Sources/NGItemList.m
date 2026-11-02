@@ -125,11 +125,6 @@ UIImage *NGBlockCornersImage(BOOL top, BOOL bottom) {
 
 // Display's SwitchNode with list.itemSwitchColors (frame 0xe9e9ea, content
 // 0x35c759, handle white), drawn by hand: iOS 6's UISwitch is the old one.
-@interface NGSwitch : UIControl
-@property (nonatomic, getter=isOn) BOOL on;
-- (void)setOn:(BOOL)on animated:(BOOL)animated;
-@end
-
 @implementation NGSwitch {
     UIView *_track;
     UIView *_fill;

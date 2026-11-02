@@ -71,3 +71,24 @@ make package install THEOS_DEVICE_IP=192.168.1.5   # сразу на девай�
 
 Следующий шаг — TDLib (C++, собирается под armv7) через `td_json_client`:
 заменить `NGDemoData` на адаптер, который наполняет те же `NGChat`/`NGMessage`.
+
+## Настоящий вход: MTProto
+
+`Sources/mtproto/ngmt.c` — своё ядро MTProto 2.0 на C: TCP (intermediate) или HTTP-транспорт,
+генерация ключа авторизации (DH + RSA_PAD, ключи серверов из MtProtoKit), шифрование AES-256-IGE /
+SHA-256, сериализация TL, `rpc_result` / `rpc_error` / `msg_container` / `gzip_packed` /
+`bad_server_salt`. Криптография — CommonCrypto на iOS, OpenSSL в тесте. Поверх него `NGTelegram`
+(ObjC): `initConnection`, `auth.sendCode`, `auth.signIn`, переезд на DC по `*_MIGRATE_X`, ключ хранится
+в NSUserDefaults. Экраны входа — `NGLogin.m` (как в AuthorizationUI).
+
+**Перед сборкой** впишите свои `NG_API_ID` и `NG_API_HASH` в `Sources/NGConfig.h`
+(my.telegram.org → API development tools). Без них экран входа предупредит и не даст продолжить.
+
+Тест ядра на Linux/macOS с настоящим тестовым сервером Telegram (создаёт ключ, ping, `initConnection`):
+
+```sh
+cc -O2 -ISources/mtproto tests/ngmt_test.c -lssl -lcrypto -lz -o ngmt_test && ./ngmt_test
+# где MTProto по TCP закрыт: NGMT_HTTP=1 ./ngmt_test
+```
+
+Пока не умеет: вход с облачным паролем (SRP), загрузку чатов — список чатов после входа всё ещё демо.

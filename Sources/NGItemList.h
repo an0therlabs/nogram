@@ -59,5 +59,12 @@ typedef NS_ENUM(NSInteger, NGItemKind) {
 - (void)reloadHeights;
 @end
 
+// Display's SwitchNode with list.itemSwitchColors, drawn by hand (iOS 6's
+// UISwitch is the old one).
+@interface NGSwitch : UIControl
+@property (nonatomic, getter=isOn) BOOL on;
+- (void)setOn:(BOOL)on animated:(BOOL)animated;
+@end
+
 // The blocks colour with a card's 26pt corners cut out (cornersImage(glass: true)).
 UIImage *NGBlockCornersImage(BOOL top, BOOL bottom);

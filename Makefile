@@ -13,12 +13,13 @@ include $(THEOS)/makefiles/common.mk
 
 APPLICATION_NAME = Nogram
 
-Nogram_FILES = $(wildcard Sources/*.m)
-Nogram_FRAMEWORKS = UIKit Foundation CoreGraphics QuartzCore
+Nogram_FILES = $(wildcard Sources/*.m) $(wildcard Sources/mtproto/*.c)
+Nogram_FRAMEWORKS = UIKit Foundation CoreGraphics QuartzCore Security
+Nogram_LIBRARIES = z
 # The UIKit APIs iOS 6 has are the ones later SDKs mark deprecated
 # (sizeWithFont:, UITextAttribute*, setFinishedSelectedImage:, ...): that is
 # deliberate, so the deprecation noise is turned off.
-Nogram_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unguarded-availability -Wno-unguarded-availability-new
+Nogram_CFLAGS = -ISources/mtproto -fobjc-arc -Wno-deprecated-declarations -Wno-unguarded-availability -Wno-unguarded-availability-new
 
 include $(THEOS_MAKE_PATH)/application.mk
 
