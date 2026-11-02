@@ -96,6 +96,19 @@ UIImage *NGBlockCornersImage(BOOL top, BOOL bottom) {
     return item;
 }
 
++ (instancetype)labeled:(NSString *)label value:(NSString *)value accent:(BOOL)accent {
+    NGItem *item = [self itemOfKind:NGItemKindLabeled title:label];
+    item.detail = value;
+    item.accent = accent;
+    return item;
+}
+
++ (instancetype)fullWidth:(UIView *)view {
+    NGItem *item = [self itemOfKind:NGItemKindFullWidth title:nil];
+    item.customView = view;
+    return item;
+}
+
 + (instancetype)custom:(UIView *)view {
     NGItem *item = [self itemOfKind:NGItemKindCustom title:nil];
     item.customView = view;
@@ -201,6 +214,7 @@ UIImage *NGBlockCornersImage(BOOL top, BOOL bottom) {
     UIView *_separator;
     UIImageView *_corners;
     UIView *_customView;
+    UILabel *_valueLabel;
 }
 
 static CGFloat NGTextHeight(NSString *text, UIFont *font, CGFloat width) {
@@ -227,7 +241,13 @@ static CGFloat NGTextHeight(NSString *text, UIFont *font, CGFloat width) {
         case NGItemKindSlider:
             return 52.0f;
         case NGItemKindCustom:
+        case NGItemKindFullWidth:
             return item.customView.bounds.size.height;
+        case NGItemKindLabeled: {
+            // PeerInfoScreenLabeledValueItem: 15 + label + 3 + text + 15
+            CGFloat textWidth = width - NGCardInset * 2.0f - 16.0f * 2.0f;
+            return 15.0f + ceilf([NGTheme regularFont:14.0f].lineHeight) + 3.0f + NGTextHeight(item.detail, NGRowFont(), textWidth) + 15.0f;
+        }
         default:
             return NGRowVerticalInset * 2.0f + ceilf(NGRowFont().lineHeight);
     }
@@ -284,7 +304,7 @@ static CGFloat NGTextHeight(NSString *text, UIFont *font, CGFloat width) {
 - (void)setHighlighted:(BOOL)highlighted animated:(BOOL)animated {
     [super setHighlighted:highlighted animated:animated];
     NGItemKind kind = self.item.kind;
-    BOOL tappable = kind == NGItemKindDisclosure || kind == NGItemKindCheck || kind == NGItemKindAction || kind == NGItemKindDestructive;
+    BOOL tappable = kind == NGItemKindDisclosure || kind == NGItemKindCheck || kind == NGItemKindAction || kind == NGItemKindDestructive || kind == NGItemKindLabeled;
     _highlight.hidden = !(highlighted && tappable && !self.item.disabled);
 }
 
@@ -295,6 +315,14 @@ static CGFloat NGTextHeight(NSString *text, UIFont *font, CGFloat width) {
     if (item.kind == NGItemKindCustom) {
         _customView = item.customView;
         [_card addSubview:_customView];
+    } else if (item.kind == NGItemKindFullWidth) {
+        _customView = item.customView;
+        [self.contentView addSubview:_customView];
+    }
+    if (!_valueLabel) {
+        _valueLabel = [NGTheme labelWithFont:NGRowFont() color:[UIColor blackColor]];
+        _valueLabel.numberOfLines = 0;
+        [_card addSubview:_valueLabel];
     }
     [self setNeedsLayout];
 }
@@ -308,8 +336,12 @@ static CGFloat NGTextHeight(NSString *text, UIFont *font, CGFloat width) {
     BOOL isRow = item.kind != NGItemKindHeader && item.kind != NGItemKindFooter;
 
     _sectionLabel.hidden = isRow;
-    _card.hidden = !isRow;
+    _card.hidden = !isRow || item.kind == NGItemKindFullWidth;
     _corners.hidden = YES;
+    if (item.kind == NGItemKindFullWidth) {
+        _customView.frame = CGRectMake(0, top, w, h);
+        return;
+    }
     if (!isRow) {
         CGFloat sw = w - NGCardInset * 2.0f - 15.0f * 2.0f;
         CGFloat th = NGTextHeight(item.title, NGSectionFont(), sw);
@@ -340,6 +372,28 @@ static CGFloat NGTextHeight(NSString *text, UIFont *font, CGFloat width) {
     _titleLabel.textColor = titleColor;
     _titleLabel.text = item.title;
     _titleLabel.hidden = item.kind == NGItemKindSlider || item.kind == NGItemKindCustom;
+    _valueLabel.hidden = item.kind != NGItemKindLabeled;
+    if (item.kind == NGItemKindLabeled) {
+        UIFont *labelFont = [NGTheme regularFont:14.0f];
+        _titleLabel.font = labelFont;
+        _titleLabel.textColor = [UIColor blackColor];
+        CGFloat textWidth = width - 32.0f;
+        _titleLabel.frame = CGRectMake(16.0f, 15.0f, textWidth, ceilf(labelFont.lineHeight));
+        _valueLabel.text = item.detail;
+        _valueLabel.textColor = item.accent ? [NGTheme accentColor] : [UIColor blackColor];
+        _valueLabel.frame = CGRectMake(16.0f, CGRectGetMaxY(_titleLabel.frame) + 3.0f, textWidth, NGTextHeight(item.detail, NGRowFont(), textWidth));
+        _detailLabel.hidden = YES;
+        _chevron.hidden = _checkView.hidden = _switch.hidden = _slider.hidden = YES;
+        _iconView.hidden = YES;
+        CGFloat px = [NGTheme pixel];
+        _separator.hidden = self.lastInBlock;
+        _separator.frame = CGRectMake(16.0f, h - px, width - 16.0f, px);
+        _corners.image = NGBlockCornersImage(self.firstInBlock, self.lastInBlock);
+        _corners.hidden = _corners.image == nil;
+        _corners.frame = cardFrame;
+        return;
+    }
+    _titleLabel.font = NGRowFont();
 
     _chevron.hidden = item.kind != NGItemKindDisclosure;
     _checkView.hidden = !(item.kind == NGItemKindCheck && item.on);
@@ -422,6 +476,21 @@ static CGFloat NGTextHeight(NSString *text, UIFont *font, CGFloat width) {
     footer.backgroundColor = [NGTheme blocksBackgroundColor];
     self.tableView.tableFooterView = footer;
     self.header.showsBackdrop = NO;
+    if (_headerView) {
+        _headerView.frame = CGRectMake(0, 0, self.view.bounds.size.width, _headerView.bounds.size.height);
+        _headerView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        self.tableView.tableHeaderView = _headerView;
+        self.tableView.contentInset = UIEdgeInsetsZero;
+        self.tableView.scrollIndicatorInsets = UIEdgeInsetsZero;
+        self.tableView.contentOffset = CGPointZero;
+        self.header.title = nil;
+    }
+}
+
+- (void)reloadHeights {
+    [self.tableView beginUpdates];
+    [self.tableView endUpdates];
+    for (UITableViewCell *cell in self.tableView.visibleCells) [cell setNeedsLayout];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -446,6 +515,8 @@ static CGFloat NGTextHeight(NSString *text, UIFont *font, CGFloat width) {
 // block's end (or its footer) and the next section, nothing inside a section.
 - (CGFloat)topGapAt:(NSInteger)index {
     NGItem *item = [self itemAt:index], *previous = [self itemAt:index - 1];
+    if (item.kind == NGItemKindFullWidth) return previous ? NGBlockSpacing - 14.0f : 0.0f;
+    if (!previous && _headerView) return 0.0f;
     if (!previous) return item.kind == NGItemKindHeader ? NGBlockSpacing - 7.0f : NGBlockSpacing;
     if (previous.kind == NGItemKindHeader) return 0.0f;
     if ([self isRow:previous] && [self isRow:item]) return 0.0f;
@@ -491,6 +562,7 @@ static CGFloat NGTextHeight(NSString *text, UIFont *font, CGFloat width) {
             [tableView reloadData];
             break;
         case NGItemKindDisclosure:
+        case NGItemKindLabeled:
         case NGItemKindAction:
         case NGItemKindDestructive:
             if (item.destination) {
