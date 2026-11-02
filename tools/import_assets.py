@@ -44,6 +44,7 @@ ASSETS = {
     "contacts_invite": "Contact List/InviteActionIcon",
     "settings_gradient": "Item List/Icons/Gradient",
     "settings_backdrop": "Item List/Icons/Backdrop",
+    "settings_profile": "Item List/Icons/Profile",
     "settings_saved": "Item List/Icons/SavedMessages",
     "settings_phone": "Item List/Icons/Phone",
     "settings_devices": "Item List/Icons/Devices",

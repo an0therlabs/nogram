@@ -357,89 +357,214 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
 
 #pragma mark - Settings
 
+// PeerInfoScreen in settings mode (PeerInfoSettingsItems.swift), day theme:
+// blocks background 0xefeff4, white cards inset by 16 with 26pt "glass"
+// corners (PresentationResourcesItemList.cornersImage(glass: true)), 24pt
+// between sections.
+static const CGFloat NGSettingsSideInset = 16.0f;     // peerInfoSideInsets: sectionLeft
+static const CGFloat NGSettingsSectionSpacing = 24.0f;
+static const CGFloat NGSettingsCornerRadius = 26.0f;
+
+// cornersImage(theme, top:, bottom:, glass: true): the blocks colour with the
+// card's rounded corners cut out, laid over the row.
+static UIImage *NGCornersImage(BOOL top, BOOL bottom) {
+    if (!top && !bottom) return nil;
+    static NSMutableDictionary *cache;
+    if (!cache) cache = [NSMutableDictionary new];
+    NSString *key = [NSString stringWithFormat:@"%d%d", top, bottom];
+    if (cache[key]) return cache[key];
+    CGSize size = CGSizeMake(56.0f, 56.0f);
+    UIGraphicsBeginImageContextWithOptions(size, NO, 0);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGRect bounds = CGRectMake(0, 0, size.width, size.height);
+    CGContextSetFillColorWithColor(context, [NGTheme blocksBackgroundColor].CGColor);
+    CGContextFillRect(context, bounds);
+    CGContextSetBlendMode(context, kCGBlendModeClear);
+    UIRectCorner corners = 0;
+    if (top) corners |= UIRectCornerTopLeft | UIRectCornerTopRight;
+    if (bottom) corners |= UIRectCornerBottomLeft | UIRectCornerBottomRight;
+    UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:bounds byRoundingCorners:corners cornerRadii:CGSizeMake(NGSettingsCornerRadius, NGSettingsCornerRadius)];
+    CGContextAddPath(context, path.CGPath);
+    CGContextFillPath(context);
+    UIImage *image = [UIGraphicsGetImageFromCurrentImageContext() stretchableImageWithLeftCapWidth:28 topCapHeight:28];
+    UIGraphicsEndImageContext();
+    cache[key] = image;
+    return image;
+}
+
+// PeerInfoScreenDisclosureItemNode: Font.regular(17), height = text + 32,
+// 30pt icon at 16, text at 16 + 29 + 16, arrow 7pt from the right edge,
+// label (secondary colour) right-aligned before the arrow, separator from
+// the text's left edge minus 1.
 @interface NGSettingsCell : UITableViewCell
 @property (nonatomic, readonly) UIImageView *iconView;
 @property (nonatomic, readonly) UILabel *titleLabel;
 @property (nonatomic, readonly) UILabel *detailLabel;
-@property (nonatomic) BOOL hidesSeparator;
+@property (nonatomic) BOOL firstInSection, lastInSection;
+@property (nonatomic) CGFloat gapBelow;   // the section spacing, carried by the last row
 @end
 
 @implementation NGSettingsCell {
+    UIView *_card;
+    UIView *_highlight;
     UIImageView *_chevron;
     UIView *_separator;
+    UIImageView *_corners;
 }
 
 - (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
     if ((self = [super initWithStyle:UITableViewCellStyleDefault reuseIdentifier:reuseIdentifier])) {
-        self.backgroundColor = [UIColor whiteColor];
+        self.selectionStyle = UITableViewCellSelectionStyleNone;
+        self.backgroundColor = [NGTheme blocksBackgroundColor];
         UIView *bg = [[UIView alloc] initWithFrame:CGRectZero];
-        bg.backgroundColor = [UIColor whiteColor];
+        bg.backgroundColor = [NGTheme blocksBackgroundColor];
         self.backgroundView = bg;
-        self.selectedBackgroundView = [NGTheme highlightView];
+
+        _card = [[UIView alloc] initWithFrame:CGRectZero];
+        _card.backgroundColor = [UIColor whiteColor];          // itemBlocksBackgroundColor
+        _highlight = [[UIView alloc] initWithFrame:CGRectZero];
+        _highlight.backgroundColor = NGHex(0xe5e5ea);          // itemHighlightedBackgroundColor
+        _highlight.hidden = YES;
         _iconView = [[UIImageView alloc] initWithFrame:CGRectZero];
         _titleLabel = [NGTheme labelWithFont:[NGTheme regularFont:17] color:[UIColor blackColor]];
-        _detailLabel = [NGTheme labelWithFont:[NGTheme regularFont:17] color:[NGTheme secondaryTextColor]];
+        _detailLabel = [NGTheme labelWithFont:[NGTheme regularFont:17] color:NGHex(0x8e8e93)];
         _detailLabel.textAlignment = NSTextAlignmentRight;
         _chevron = [[UIImageView alloc] initWithImage:NGTintedAsset(@"list_disclosure", NGHex(0xbab9be))];
-        _separator = [NGTheme separatorView];
-        for (UIView *v in @[ _iconView, _titleLabel, _detailLabel, _chevron, _separator ]) {
-            [self.contentView addSubview:v];
+        _separator = [NGTheme separatorView];                   // itemBlocksSeparatorColor
+        _corners = [[UIImageView alloc] initWithFrame:CGRectZero];
+        [self.contentView addSubview:_card];
+        for (UIView *v in @[ _highlight, _iconView, _titleLabel, _detailLabel, _chevron, _separator ]) {
+            [_card addSubview:v];
         }
+        [self.contentView addSubview:_corners];
     }
     return self;
 }
 
-- (void)setHidesSeparator:(BOOL)hidesSeparator {
-    _hidesSeparator = hidesSeparator;
-    _separator.hidden = hidesSeparator;
+- (void)setHighlighted:(BOOL)highlighted animated:(BOOL)animated {
+    [super setHighlighted:highlighted animated:animated];
+    _highlight.hidden = !highlighted;
+}
+
+- (void)setSelected:(BOOL)selected animated:(BOOL)animated {
+    [super setSelected:selected animated:animated];
+    _highlight.hidden = !selected;
 }
 
 - (void)layoutSubviews {
     [super layoutSubviews];
-    CGFloat w = self.contentView.bounds.size.width, h = self.contentView.bounds.size.height;
-    _iconView.frame = CGRectMake(15, floorf((h - 30) / 2), 30, 30);
-    CGSize cs = _chevron.image.size;
-    _chevron.frame = CGRectMake(w - 8 - cs.width, floorf((h - cs.height) / 2), cs.width, cs.height);
-    CGFloat dw = _detailLabel.text.length ? [NGTheme widthOfText:_detailLabel.text font:_detailLabel.font] : 0;
-    _detailLabel.frame = CGRectMake(w - 30 - dw, 0, dw, h);
-    _titleLabel.frame = CGRectMake(59, 0, w - 59 - 40 - dw, h);
+    CGFloat w = self.contentView.bounds.size.width, h = self.contentView.bounds.size.height - self.gapBelow;
+    CGRect cardFrame = CGRectMake(NGSettingsSideInset, 0, w - NGSettingsSideInset * 2.0f, h);
+    _card.frame = cardFrame;
+    _highlight.frame = _card.bounds;
+    CGFloat width = cardFrame.size.width;
+    const CGFloat sideInset = 16.0f;
+    CGFloat leftInset = sideInset + 29.0f + 16.0f;
+    CGFloat rightInset = sideInset + 18.0f;
+
+    _iconView.frame = CGRectMake(sideInset, floorf((h - 30.0f) / 2.0f), 30.0f, 30.0f);
+    CGSize arrow = _chevron.image.size;
+    _chevron.frame = CGRectMake(width - 7.0f - arrow.width, floorf((h - arrow.height) / 2.0f), arrow.width, arrow.height);
+    CGFloat textWidth = [NGTheme widthOfText:_titleLabel.text font:_titleLabel.font];
+    CGFloat textHeight = ceilf(_titleLabel.font.lineHeight);
+    _titleLabel.frame = CGRectMake(leftInset, floorf((h - textHeight) / 2.0f), MIN(textWidth, width - leftInset - rightInset), textHeight);
+    CGFloat labelWidth = MIN([NGTheme widthOfText:_detailLabel.text font:_detailLabel.font], width - textWidth - leftInset - rightInset);
+    _detailLabel.frame = CGRectMake(width - rightInset - labelWidth, floorf((h - textHeight) / 2.0f), labelWidth, textHeight);
     CGFloat px = [NGTheme pixel];
-    _separator.frame = CGRectMake(59, h - px, w - 59, px);
+    _separator.hidden = self.lastInSection;
+    _separator.frame = CGRectMake(leftInset - 1.0f, h - px, width - leftInset + 1.0f, px);
+
+    _corners.image = NGCornersImage(self.firstInSection, self.lastInSection);
+    _corners.hidden = _corners.image == nil;
+    _corners.frame = cardFrame;
+}
+
+@end
+
+// PeerInfoHeaderNode in settings: a 100pt avatar 22pt below the status bar,
+// the name in Font.medium(28) 9pt under it, then the phone and username in
+// Font.regular(17), secondary colour, 1pt lower.
+@interface NGSettingsHeaderView : UIView
+@end
+
+@implementation NGSettingsHeaderView {
+    NGAvatarView *_avatar;
+    UILabel *_name;
+    UILabel *_info;
+}
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    if ((self = [super initWithFrame:frame])) {
+        self.backgroundColor = [NGTheme blocksBackgroundColor];
+        NGUser *me = [NGDemoData shared].me;
+        _avatar = [[NGAvatarView alloc] initWithFrame:CGRectMake(0, 0, 100, 100)];
+        [_avatar configureWithUser:me];
+        _avatar.showsOnline = NO;
+        _name = [NGTheme labelWithFont:[NGTheme mediumFont:28.0f] color:[UIColor blackColor]];
+        _name.textAlignment = NSTextAlignmentCenter;
+        _name.text = [me displayName];
+        _info = [NGTheme labelWithFont:[NGTheme regularFont:17.0f] color:NGHex(0x8e8e93)];
+        _info.textAlignment = NSTextAlignmentCenter;
+        _info.text = [NSString stringWithFormat:@"%@ • @%@", me.phone, me.username];
+        [self addSubview:_avatar];
+        [self addSubview:_name];
+        [self addSubview:_info];
+    }
+    return self;
+}
+
++ (CGFloat)heightForWidth:(CGFloat)width {
+    CGFloat nameH = ceilf([NGTheme mediumFont:28.0f].lineHeight);
+    CGFloat infoH = ceilf([NGTheme regularFont:17.0f].lineHeight);
+    // contentHeight += headerHeight; contentHeight += sectionSpacing + 12
+    return 22.0f + 100.0f + 9.0f + nameH + 1.0f + infoH + NGSettingsSectionSpacing + 12.0f;
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat w = self.bounds.size.width;
+    _avatar.frame = CGRectMake(floorf((w - 100.0f) / 2.0f), 22.0f, 100.0f, 100.0f);
+    CGFloat nameH = ceilf(_name.font.lineHeight);
+    _name.frame = CGRectMake(16.0f, CGRectGetMaxY(_avatar.frame) + 9.0f, w - 32.0f, nameH);
+    _info.frame = CGRectMake(16.0f, CGRectGetMaxY(_name.frame) + 1.0f, w - 32.0f, ceilf(_info.font.lineHeight));
 }
 
 @end
 
 @implementation NGSettingsController {
-    NSArray *_rows;
+    NSArray *_sections;
 }
 
 - (instancetype)init {
     if ((self = [super initWithStyle:UITableViewStylePlain])) {
         self.title = @"Настройки";
-        // One flat list with spacer rows: plain-style section headers would stick
-        // to the top while scrolling, and grouped style on iOS 6 is the old card look.
-        NSNull *gap = [NSNull null];
-        // PresentationResourcesSettings: colorRed 0xFF453A, colorGreen 0x34C759,
-        // colorBlue 0x0a84ff, colorLightBlue 0x32ADE6, colorOrange 0xFF9F0A,
-        // colorPurple 0xAF52DE, colorGray 0x8E8E93; tips 0xffcc02.
-        _rows = @[
-            gap,
-            @[ @"settings_saved", NGHex(0x0a84ff), @"Избранное", @"" ],
-            @[ @"settings_phone", NGHex(0x34C759), @"Недавние звонки", @"" ],
-            @[ @"settings_devices", NGHex(0xFF9F0A), @"Устройства", @"2" ],
-            @[ @"settings_folder", NGHex(0x32ADE6), @"Папки с чатами", @"" ],
-            gap,
-            @[ @"settings_notifications", NGHex(0xFF453A), @"Уведомления и звуки", @"" ],
-            @[ @"settings_privacy", NGHex(0x8E8E93), @"Конфиденциальность", @"" ],
-            @[ @"settings_data", NGHex(0x34C759), @"Данные и память", @"" ],
-            @[ @"settings_appearance", NGHex(0x32ADE6), @"Оформление", @"" ],
-            @[ @"settings_power", NGHex(0xFF9F0A), @"Энергосбережение", @"Выкл." ],
-            @[ @"settings_language", NGHex(0xAF52DE), @"Язык", @"Русский" ],
-            gap,
-            @[ @"settings_support", NGHex(0xFF9F0A), @"Задать вопрос", @"" ],
-            @[ @"settings_faq", NGHex(0x32ADE6), @"Вопросы о Telegram", @"" ],
-            @[ @"settings_tips", NGHex(0xffcc02), @"Возможности Telegram", @"" ],
-            gap,
+        // The sections settingsItems builds, in order: myProfile, shortcuts,
+        // advanced, support (the account, wallet and payment sections need a
+        // server). Colours: PresentationResourcesSettings.
+        UIColor *red = NGHex(0xFF453A), *green = NGHex(0x34C759), *blue = NGHex(0x0a84ff), *lightBlue = NGHex(0x32ADE6);
+        UIColor *orange = NGHex(0xFF9F0A), *purple = NGHex(0xAF52DE), *gray = NGHex(0x8E8E93);
+        _sections = @[
+            @[ @[ @"settings_profile", red, @"Мой профиль", @"" ] ],
+            @[
+                @[ @"settings_saved", blue, @"Избранное", @"" ],
+                @[ @"settings_phone", green, @"Недавние звонки", @"" ],
+                @[ @"settings_devices", orange, @"Устройства", @"2" ],
+                @[ @"settings_folder", lightBlue, @"Папки с чатами", @"" ],
+            ],
+            @[
+                @[ @"settings_notifications", red, @"Уведомления и звуки", @"" ],
+                @[ @"settings_privacy", gray, @"Конфиденциальность", @"" ],
+                @[ @"settings_data", green, @"Данные и память", @"" ],
+                @[ @"settings_appearance", lightBlue, @"Оформление", @"" ],
+                @[ @"settings_power", orange, @"Энергосбережение", @"Выкл." ],
+                @[ @"settings_privacy", gray, @"Настройки Pure", @"" ],
+                @[ @"settings_language", purple, @"Язык", @"Русский" ],
+            ],
+            @[
+                @[ @"settings_support", orange, @"Задать вопрос", @"" ],
+                @[ @"settings_faq", lightBlue, @"Вопросы о Telegram", @"" ],
+                @[ @"settings_tips", NGHex(0xffcc02), @"Возможности Telegram", @"" ],
+            ],
         ];
     }
     return self;
@@ -449,73 +574,58 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
     [super viewDidLoad];
     [NGTheme disableExtendedLayoutFor:self];
     NGPrepareTable(self.tableView, [NGTheme blocksBackgroundColor]);
-    self.tableView.tableHeaderView = [self profileHeader];
+    // The bar floats over the profile header, which starts at the top.
+    self.tableView.contentInset = UIEdgeInsetsMake(0, 0, NGTabBarHeight, 0);
+    self.tableView.scrollIndicatorInsets = self.tableView.contentInset;
+    self.tableView.contentOffset = CGPointZero;
+    self.header.title = nil;
+    self.header.showsBackdrop = NO;
     self.header.rightButtons = @[ [NGGlassButton textButton:@"Изм." target:nil action:NULL] ];
+    CGFloat w = self.view.bounds.size.width;
+    NGSettingsHeaderView *profile = [[NGSettingsHeaderView alloc] initWithFrame:CGRectMake(0, 0, w, [NGSettingsHeaderView heightForWidth:w])];
+    profile.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    self.tableView.tableHeaderView = profile;
 }
 
-- (UIView *)profileHeader {
-    CGFloat w = self.view.bounds.size.width;
-    NGUser *me = [NGDemoData shared].me;
-    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, 196)];
-    header.backgroundColor = [NGTheme blocksBackgroundColor];
-
-    NGAvatarView *avatar = [[NGAvatarView alloc] initWithFrame:CGRectMake(floorf((w - 96) / 2), 16, 96, 96)];
-    [avatar configureWithUser:me];
-    avatar.showsOnline = NO;
-    avatar.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin;
-    [header addSubview:avatar];
-
-    UILabel *name = [NGTheme labelWithFont:[NGTheme mediumFont:26] color:[UIColor blackColor]];
-    name.text = [me displayName];
-    name.textAlignment = NSTextAlignmentCenter;
-    name.frame = CGRectMake(0, 122, w, 32);
-    name.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [header addSubview:name];
-
-    UILabel *info = [NGTheme labelWithFont:[NGTheme regularFont:16] color:[NGTheme secondaryTextColor]];
-    info.text = [NSString stringWithFormat:@"%@ • @%@", me.phone, me.username];
-    info.textAlignment = NSTextAlignmentCenter;
-    info.frame = CGRectMake(0, 156, w, 20);
-    info.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [header addSubview:info];
-    return header;
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    return _sections.count;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return _rows.count;
+    return [_sections[section] count];
+}
+
+- (CGFloat)gapBelowRowAtIndexPath:(NSIndexPath *)indexPath {
+    if (indexPath.row + 1 < (NSInteger)[_sections[indexPath.section] count]) return 0.0f;
+    return indexPath.section + 1 < (NSInteger)_sections.count ? NGSettingsSectionSpacing : 18.0f;
 }
 
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
-    return [_rows[indexPath.row] isKindOfClass:[NSNull class]] ? 35 : 44;
+    return ceilf([NGTheme regularFont:17].lineHeight) + 32.0f + [self gapBelowRowAtIndexPath:indexPath];
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    id row = _rows[indexPath.row];
-    if ([row isKindOfClass:[NSNull class]]) {
-        NGSpacerCell *cell = [tableView dequeueReusableCellWithIdentifier:@"gap"];
-        if (!cell) cell = [[NGSpacerCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"gap"];
-        return cell;
-    }
     NGSettingsCell *cell = [tableView dequeueReusableCellWithIdentifier:@"item"];
     if (!cell) cell = [[NGSettingsCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"item"];
-    NSArray *item = row;
+    NSArray *rows = _sections[indexPath.section];
+    NSArray *item = rows[indexPath.row];
     cell.iconView.image = NGSettingsIcon(item[0], @[ item[1] ]);
     cell.titleLabel.text = item[2];
     cell.detailLabel.text = item[3];
-    BOOL lastInBlock = indexPath.row + 1 >= (NSInteger)_rows.count || [_rows[indexPath.row + 1] isKindOfClass:[NSNull class]];
-    cell.hidesSeparator = lastInBlock;
+    cell.firstInSection = indexPath.row == 0;
+    cell.lastInSection = indexPath.row + 1 == (NSInteger)rows.count;
+    cell.gapBelow = [self gapBelowRowAtIndexPath:indexPath];
     [cell setNeedsLayout];
     return cell;
 }
 
 - (void)tableView:(UITableView *)tableView willDisplayCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)indexPath {
-    BOOL gap = [_rows[indexPath.row] isKindOfClass:[NSNull class]];
-    cell.backgroundColor = gap ? [NGTheme blocksBackgroundColor] : [UIColor whiteColor];
+    cell.backgroundColor = [NGTheme blocksBackgroundColor];
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    if (indexPath.row == 1) {
+    if (indexPath.section == 1 && indexPath.row == 0) {
         NGChat *saved = nil;
         for (NGChat *chat in [NGDemoData shared].chats) {
             if (chat.kind == NGChatKindSaved) saved = chat;
