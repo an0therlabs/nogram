@@ -5,6 +5,7 @@
 #import "NGOriginal.h"
 #import "NGTabBarController.h"
 #import "NGSettingsScreens.h"
+#import "NGTelegram.h"
 #import <QuartzCore/QuartzCore.h>
 
 static void NGPrepareTable(UITableView *table, UIColor *background) {
@@ -78,6 +79,8 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
     NSString *_query;
     NGGlassButton *_editButton;
     UIView *_searchPlaceholder;
+    NSTimer *_refreshTimer;
+    BOOL _loading;
 }
 
 - (instancetype)init {
@@ -141,6 +144,29 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     [self reloadRows];
+    [self loadRemoteDialogs];
+    [_refreshTimer invalidate];
+    _refreshTimer = [NSTimer scheduledTimerWithTimeInterval:10.0 target:self selector:@selector(loadRemoteDialogs) userInfo:nil repeats:YES];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    [_refreshTimer invalidate];
+    _refreshTimer = nil;
+}
+
+// With an account, the list is the account's dialogs (messages.getDialogs).
+- (void)loadRemoteDialogs {
+    if (![NGTelegram shared].isAuthorized || _loading) return;
+    _loading = YES;
+    [[NGTelegram shared] loadDialogs:^(NSArray *chats, NSString *error) {
+        self->_loading = NO;
+        if (!chats) return;
+        NSMutableArray *store = [NGDemoData shared].chats;
+        [store removeAllObjects];
+        [store addObjectsFromArray:chats];
+        if (!self.editing) [self reloadRows];
+    }];
 }
 
 - (void)reloadRows {

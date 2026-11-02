@@ -6,6 +6,7 @@
 #import "NGCurves.h"
 #import "NGGlass.h"
 #import "NGProfile.h"
+#import "NGTelegram.h"
 #import <QuartzCore/QuartzCore.h>
 
 #pragma mark - Layout constants
@@ -337,6 +338,9 @@ static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
     CGFloat _keyboardOverlap;
     NGMessage *_animatingMessage;
     CGRect _sourceFieldFrame;
+    NSTimer *_pollTimer;
+    BOOL _loadingHistory;
+    NSMutableArray *_pendingSends;
 }
 
 - (instancetype)initWithChat:(NGChat *)chat {
@@ -569,12 +573,47 @@ static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
     [_table reloadData];
     [self scrollToBottomAnimated:NO];
     _chat.unreadCount = 0;
+    if (_chat.peerKey) {
+        [self loadHistory];
+        [_pollTimer invalidate];
+        _pollTimer = [NSTimer scheduledTimerWithTimeInterval:4.0 target:self selector:@selector(loadHistory) userInfo:nil repeats:YES];
+    }
+}
+
+// A server chat: messages.getHistory now and every few seconds while open
+// (no updates connection yet), keeping messages still being sent at the end.
+- (void)loadHistory {
+    if (_loadingHistory) return;
+    _loadingHistory = YES;
+    __weak NGChatController *weakSelf = self;
+    NGChat *chat = _chat;
+    [[NGTelegram shared] loadHistory:chat completion:^(NSArray *messages, NSString *error) {
+        NGChatController *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf->_loadingHistory = NO;
+        if (!messages) return;
+        int32_t lastOld = ((NGMessage *)[chat.messages lastObject]).remoteId;
+        int32_t lastNew = ((NGMessage *)[messages lastObject]).remoteId;
+        BOOL changed = messages.count != chat.messages.count - strongSelf->_pendingSends.count || lastOld != lastNew || chat.messages.count == 0;
+        for (NGMessage *m in messages) if (m.outgoing && m.status == NGMessageStatusSent) changed = YES;
+        if (!changed) return;
+        NSMutableArray *merged = [messages mutableCopy];
+        [merged addObjectsFromArray:strongSelf->_pendingSends ?: @[]];
+        chat.messages = merged;
+        BOOL atBottom = strongSelf->_table.contentOffset.y + strongSelf->_table.bounds.size.height >= strongSelf->_table.contentSize.height - 40.0f;
+        [strongSelf buildRows];
+        [strongSelf->_table reloadData];
+        if (atBottom || lastOld == 0) [strongSelf scrollToBottomAnimated:lastOld != 0];
+        [[NGTelegram shared] markRead:chat maxId:lastNew];
+    }];
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
     [super viewWillDisappear:animated];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:UIKeyboardWillChangeFrameNotification object:nil];
     [self.view endEditing:YES];
+    [_pollTimer invalidate];
+    _pollTimer = nil;
 }
 
 - (void)viewDidLayoutSubviews {
@@ -712,6 +751,27 @@ static BOOL NGGroups(NGMessage *a, NGMessage *b) {
     // ChatControllerNode: the send transition also steps the wallpaper.
     [_wallpaper animateEventWithDuration:NGSendTransitionDuration];
 
+    if (_chat.peerKey) {
+        // messages.sendMessage; the next history load replaces the local copy.
+        if (!_pendingSends) _pendingSends = [NSMutableArray array];
+        [_pendingSends addObject:sent];
+        __weak NGChatController *weakSelf = self;
+        [[NGTelegram shared] sendText:text toChat:_chat completion:^(NSString *error) {
+            NGChatController *strongSelf = weakSelf;
+            [strongSelf->_pendingSends removeObject:sent];
+            if (error) {
+                [[[UIAlertView alloc] initWithTitle:@"Сообщение не отправлено" message:error delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show];
+                [strongSelf->_chat.messages removeObject:sent];
+                [strongSelf buildRows];
+                [strongSelf->_table reloadData];
+                return;
+            }
+            sent.status = NGMessageStatusSent;
+            [strongSelf refreshVisible];
+            [strongSelf loadHistory];
+        }];
+        return;
+    }
     if (_chat.kind != NGChatKindSaved) [self simulateDeliveryOf:sent];
 }
 

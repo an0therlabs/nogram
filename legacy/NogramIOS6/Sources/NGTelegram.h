@@ -19,4 +19,14 @@
 - (void)signIn:(NSString *)phone phoneCodeHash:(NSString *)hash code:(NSString *)code completion:(void (^)(NSDictionary *user, NSString *error))completion;
 - (void)logOut;
 
+// messages.getDialogs → NGChat objects (users, groups, channels, Saved
+// Messages), each with its last message, unread count and mute state.
+- (void)loadDialogs:(void (^)(NSArray *chats, NSString *error))completion;
+// messages.getHistory → the latest messages, oldest first.
+- (void)loadHistory:(id)chat completion:(void (^)(NSArray *messages, NSString *error))completion;
+// messages.sendMessage
+- (void)sendText:(NSString *)text toChat:(id)chat completion:(void (^)(NSString *error))completion;
+// messages.readHistory / channels.readHistory up to maxId
+- (void)markRead:(id)chat maxId:(int32_t)maxId;
+
 @end
