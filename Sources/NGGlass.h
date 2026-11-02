@@ -3,7 +3,7 @@
 // GlassBackgroundView without a backdrop layer: the legacy shadow image
 // under the legacy glass image, both overhanging the view by 32pt.
 @interface NGGlassView : UIView
-@property (nonatomic, strong) UIColor *fillColor;   // default white 0.7 (TintColor .panel, light)
+@property (nonatomic, strong) UIColor *fillColor;   // default opaque white
 @property (nonatomic, readonly) UIView *contentView;
 @end
 
