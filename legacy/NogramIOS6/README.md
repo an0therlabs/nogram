@@ -20,6 +20,7 @@
 | Стекло (капсулы) | `GlassBackgroundComponent.swift` `generateLegacyGlassImage` / `generateLegacyShadowImage` | `NGOriginal.m`, `NGGlass.m` |
 | Шапка с пилюлями | `NavigationBarComponent`, `NavigationButtonComponent` | `NGGlass.m` (`NGHeaderView`) |
 | Экран настроек | `PeerInfoSettingsItems.swift`, `PeerInfoScreenDisclosureItem.swift`, `PeerInfoHeaderNode.swift`, `cornersImage(glass:)` | `NGControllers.m` |
+| Внутренние экраны настроек | `ItemListUI` (glass), `NotificationsAndSoundsController`, `PrivacyAndSecurityController`, `DataAndStorageSettingsController`, `ThemeSettingsController`, `EnergySavingSettingsScreen`, `RecentSessionsController` | `NGItemList.m`, `NGSettingsScreens.m` |
 | Панель ввода | `ChatTextInputPanelNode.swift` (стеклянный круг 40 + капсула поля) | `NGChatController.m` |
 | Кривые отправки | `ChatMessageTransitionNode.swift` (`.bezier`), `Spring.swift` | `NGCurves.m` |
 | Метрики сообщений | `ChatMessageItemLayoutConstants.compact`, `ChatMessageDateAndStatusNode` | `NGChatController.m` |
