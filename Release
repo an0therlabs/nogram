@@ -7,10 +7,10 @@ Architectures: iphoneos-arm
 Components: main
 Description: Nogram — Telegram-style client for iOS 6
 MD5Sum:
- e9eebff2dc68edb74c58b760b6c8b3b1 598 Packages
- 1964692db896fba73394a5ef27ba9b5e 418 Packages.gz
- 28c73f7865b1d0e2ce3d05a7607ee87a 448 Packages.bz2
+ f94e2d04773123e91fb0af464f4f038d 598 Packages
+ 9588ff6ea0bd7bcb195d6bbce0cae20e 416 Packages.gz
+ 099aef6a71042a80630060adb71d9e76 453 Packages.bz2
 SHA256:
- 1058bf15f94e64242d5edef31fc222921b80487d398ce50c566e17294268d2d7 598 Packages
- f94adf3dc039ac3ecd2e0c4655918fe9188aa1d72d9828565ef4333fd8645cc8 418 Packages.gz
- 4fe24be55871b45bb01a8567fdb706c714d278d7798ddc71737e848ed3d7e8f0 448 Packages.bz2
+ 08747448f485e4f003ae7595f0a06b30c52adc881ee990b4984814debe1dc0eb 598 Packages
+ a68093c30ee95abee76db967a47b198c3fcaabb62932584ad388857a4147b843 416 Packages.gz
+ de1a4e630fefec0d9ce4b84c4a607181fa2b4d41e3fa4278464aed798793a0e4 453 Packages.bz2
