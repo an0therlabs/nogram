@@ -12,7 +12,9 @@
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
         self.backgroundColor = [UIColor clearColor];
-        _fillColor = [UIColor colorWithWhite:1.0f alpha:0.7f];
+        // Opaque white instead of TintColor .panel's white 0.7: without a backdrop
+        // blur on iOS 6, see-through capsules let the content behind them show.
+        _fillColor = [UIColor whiteColor];
         _shadowView = [[UIImageView alloc] initWithFrame:CGRectZero];
         _foregroundView = [[UIImageView alloc] initWithFrame:CGRectZero];
         _contentView = [[UIView alloc] initWithFrame:self.bounds];
