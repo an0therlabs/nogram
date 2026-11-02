@@ -33,3 +33,12 @@ UIImage *NGBadgeBackgroundImage(UIColor *color, CGFloat diameter);
 
 // PresentationResourcesSettings.swift: renderSettingsIcon(name:backgroundColors:)
 UIImage *NGSettingsIcon(NSString *assetName, NSArray *backgroundColors);
+
+// GlassBackgroundComponent.swift: the pre-iOS 26 glass. Without a backdrop
+// layer (none exists on iOS 6) GlassBackgroundView is exactly these two
+// images: the soft outer shadow and the fill with its light rim.
+// generateLegacyGlassImage(size: (2r, 2r), inset: 32, borderWidthFactor:, isDark: false, fillColor:)
+UIImage *NGLegacyGlassImage(CGFloat cornerRadius, CGFloat borderWidthFactor, UIColor *fillColor);
+// generateLegacyShadowImage(cornerRadius:shadowInset: 32)
+UIImage *NGLegacyShadowImage(CGFloat cornerRadius);
+extern const CGFloat NGGlassShadowInset;   // 32

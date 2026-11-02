@@ -16,7 +16,10 @@
 | Иконки настроек | `PresentationResourcesSettings.swift` `renderSettingsIcon` | `NGOriginal.m` |
 | Обои: градиент + анимация фазы | `SoftwareGradientBackground.swift` | `NGWallpaper.m` |
 | Обои: узор | `fqv01SQemVIBAAAApND8LDRUhRU.tgv`, soft light 50% | `Resources/wallpaper_pattern*.png` |
-| Таббар | `TabBarNode.swift` | `NGTabBarController.m` |
+| Таббар (капсула, линза) | `TabBarComponent.swift`, `TabBarItemsLayout.swift`, `LiquidLensView.swift` | `NGTabBarController.m` |
+| Стекло (капсулы) | `GlassBackgroundComponent.swift` `generateLegacyGlassImage` / `generateLegacyShadowImage` | `NGOriginal.m`, `NGGlass.m` |
+| Шапка с пилюлями | `NavigationBarComponent`, `NavigationButtonComponent` | `NGGlass.m` (`NGHeaderView`) |
+| Панель ввода | `ChatTextInputPanelNode.swift` (стеклянный круг 40 + капсула поля) | `NGChatController.m` |
 | Кривые отправки | `ChatMessageTransitionNode.swift` (`.bezier`), `Spring.swift` | `NGCurves.m` |
 | Метрики сообщений | `ChatMessageItemLayoutConstants.compact`, `ChatMessageDateAndStatusNode` | `NGChatController.m` |
 | Иконки | `submodules/TelegramUI/Images.xcassets` | `tools/import_assets.py` → `Resources/` |

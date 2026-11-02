@@ -4,6 +4,7 @@
 #import "NGOriginal.h"
 #import "NGWallpaper.h"
 #import "NGCurves.h"
+#import "NGGlass.h"
 #import <QuartzCore/QuartzCore.h>
 
 #pragma mark - Layout constants
@@ -320,9 +321,10 @@ static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
     NSMutableArray *_rows;
     NGWallpaperView *_wallpaper;
     UITableView *_table;
+    NGHeaderView *_header;
     UIView *_panel;
-    UIView *_panelLine;
-    UIView *_field;
+    NGGlassView *_attachGlass;
+    NGGlassView *_field;
     UITextView *_textView;
     UILabel *_placeholder;
     UIButton *_attach;
@@ -361,7 +363,8 @@ static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
     _table.separatorStyle = UITableViewCellSeparatorStyleNone;
     _table.dataSource = self;
     _table.delegate = self;
-    _table.contentInset = UIEdgeInsetsMake(4, 0, 6, 0);
+    _table.contentInset = UIEdgeInsetsMake([NGHeaderView height] + 4, 0, 6, 0);
+    _table.scrollIndicatorInsets = UIEdgeInsetsMake([NGHeaderView height], 0, 0, 0);
     if ([_table respondsToSelector:@selector(setKeyboardDismissMode:)]) {
         _table.keyboardDismissMode = UIScrollViewKeyboardDismissModeInteractive;
     }
@@ -375,41 +378,41 @@ static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
     [self buildRows];
 }
 
+// The chat's bar in the new design: a glass back circle, the title in a glass
+// capsule, the avatar on the right; no backdrop over the wallpaper.
 - (void)buildNavigationItem {
-    NSArray *stack = self.navigationController.viewControllers;
-    NSString *backTitle = @"Назад";
-    if (stack.count >= 2) {
-        UIViewController *previous = stack[stack.count - 2];
-        if (previous.title.length) backTitle = previous.title;
-    }
-    self.navigationItem.leftBarButtonItem = [NGTheme backButtonWithTitle:backTitle target:self action:@selector(back)];
+    _header = [[NGHeaderView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, [NGHeaderView height])];
+    _header.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    _header.showsBackdrop = NO;
+    _header.leftButtons = @[ [NGGlassButton iconButton:@"nav_back" tint:NGGlassButtonTintGeneric target:self action:@selector(back)] ];
 
-    UIView *titleView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 180, 44)];
-    _titleLabel = [NGTheme labelWithFont:[NGTheme semiboldFont:17.0f] color:[UIColor blackColor]];
+    NGGlassView *titlePill = [[NGGlassView alloc] initWithFrame:CGRectMake(0, 0, 180, 44)];
+    _titleLabel = [NGTheme labelWithFont:[NGTheme semiboldFont:16.0f] color:[UIColor blackColor]];
     _titleLabel.textAlignment = NSTextAlignmentCenter;
     _titleLabel.text = _chat.title;
-    _titleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    _subtitleLabel = [NGTheme labelWithFont:[NGTheme regularFont:13.0f] color:[NGTheme secondaryTextColor]];
+    _subtitleLabel = [NGTheme labelWithFont:[NGTheme regularFont:12.0f] color:[NGTheme secondaryTextColor]];
     _subtitleLabel.textAlignment = NSTextAlignmentCenter;
-    _subtitleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    [titleView addSubview:_titleLabel];
-    [titleView addSubview:_subtitleLabel];
+    [titlePill.contentView addSubview:_titleLabel];
+    [titlePill.contentView addSubview:_subtitleLabel];
+    CGFloat titleWidth = [NGTheme widthOfText:_chat.title font:_titleLabel.font];
+    CGFloat pillWidth = MIN(200.0f, MAX(110.0f, titleWidth + 32.0f));
+    titlePill.bounds = CGRectMake(0, 0, pillWidth, 44);
+    _titleLabel.autoresizingMask = _subtitleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     if (_chat.kind == NGChatKindSaved) {
-        _titleLabel.frame = CGRectMake(0, 11, 180, 22);
+        _titleLabel.frame = CGRectMake(12, 11, pillWidth - 24, 22);
         _subtitleLabel.hidden = YES;
     } else {
-        _titleLabel.frame = CGRectMake(0, 4, 180, 21);
-        _subtitleLabel.frame = CGRectMake(0, 24, 180, 16);
+        _titleLabel.frame = CGRectMake(12, 5, pillWidth - 24, 20);
+        _subtitleLabel.frame = CGRectMake(12, 24, pillWidth - 24, 15);
     }
-    self.navigationItem.titleView = titleView;
-    [self updateSubtitle];
+    _header.titleView = titlePill;
 
-    NGAvatarView *avatar = [[NGAvatarView alloc] initWithFrame:CGRectMake(0, 0, 37, 37)];
+    NGAvatarView *avatar = [[NGAvatarView alloc] initWithFrame:CGRectMake(0, 0, 44, 44)];
     [avatar configureWithChat:_chat];
     avatar.showsOnline = NO;
-    UIView *holder = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 37, 37)];
-    [holder addSubview:avatar];
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithCustomView:holder];
+    _header.rightButtons = @[ avatar ];
+    [self.view addSubview:_header];
+    [self updateSubtitle];
 }
 
 - (void)updateSubtitle {
@@ -418,37 +421,36 @@ static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
     _subtitleLabel.textColor = accent ? [NGTheme accentColor] : [NGTheme secondaryTextColor];
 }
 
-// ChatTextInputPanelNode with the day theme's inputPanel colours.
+// ChatTextInputPanelNode, new design: no panel background; a 40pt glass
+// circle for attachments at x 8, then (6pt on) the field's glass capsule to
+// 8pt from the right, with the send/record button inside its right end.
 - (void)buildPanel {
     UIColor *control = NGHex(0x858e99);   // inputPanel.panelControlColor
     _panel = [[UIView alloc] initWithFrame:CGRectZero];
-    _panel.backgroundColor = NGHex(0xf7f7f7);
-    _panelLine = [[UIView alloc] initWithFrame:CGRectZero];
-    _panelLine.backgroundColor = NGHex(0xb2b2b2);
-    [_panel addSubview:_panelLine];
+    _panel.backgroundColor = [UIColor clearColor];
     [self.view addSubview:_panel];
 
     if ([self isChannel]) {
+        NGGlassView *glass = [[NGGlassView alloc] initWithFrame:CGRectZero];
+        glass.tag = 1;
+        [_panel addSubview:glass];
         _channelButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        _channelButton.titleLabel.font = [NGTheme regularFont:17];
-        [_channelButton setTitleColor:[NGTheme accentColor] forState:UIControlStateNormal];
-        [_channelButton setTitleColor:[[NGTheme accentColor] colorWithAlphaComponent:0.4f] forState:UIControlStateHighlighted];
+        _channelButton.titleLabel.font = [NGTheme mediumFont:17];
+        [_channelButton setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+        [_channelButton setTitleColor:[UIColor colorWithWhite:0 alpha:0.4f] forState:UIControlStateHighlighted];
         [_channelButton addTarget:self action:@selector(toggleMute) forControlEvents:UIControlEventTouchUpInside];
-        [_panel addSubview:_channelButton];
+        [glass.contentView addSubview:_channelButton];
         [self updateChannelButton];
         return;
     }
 
+    _attachGlass = [[NGGlassView alloc] initWithFrame:CGRectZero];
+    [_panel addSubview:_attachGlass];
     _attach = [UIButton buttonWithType:UIButtonTypeCustom];
     [_attach setImage:NGTintedAsset(@"input_attach", control) forState:UIControlStateNormal];
-    [_panel addSubview:_attach];
+    [_attachGlass.contentView addSubview:_attach];
 
-    _field = [[UIView alloc] initWithFrame:CGRectZero];
-    _field.backgroundColor = [UIColor whiteColor];
-    _field.layer.cornerRadius = 16.5f;
-    _field.layer.borderWidth = NGPx();
-    _field.layer.borderColor = NGHex(0xd9dcdf).CGColor;
-    _field.clipsToBounds = YES;
+    _field = [[NGGlassView alloc] initWithFrame:CGRectZero];
     [_panel addSubview:_field];
 
     _textView = [[UITextView alloc] initWithFrame:CGRectZero];
@@ -457,18 +459,18 @@ static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
     _textView.delegate = self;
     _textView.scrollEnabled = NO;
     _textView.scrollsToTop = NO;
-    [_field addSubview:_textView];
+    [_field.contentView addSubview:_textView];
 
-    _placeholder = [NGTheme labelWithFont:[NGTheme regularFont:17.0f] color:NGHex(0xbebec0)];
+    _placeholder = [NGTheme labelWithFont:[NGTheme regularFont:17.0f] color:NGHex(0x8e8e93)];
     _placeholder.text = @"Сообщение";
-    [_field addSubview:_placeholder];
+    [_field.contentView addSubview:_placeholder];
 
     _stickers = [[UIImageView alloc] initWithImage:NGTintedAsset(@"input_stickers", control)];
-    [_field addSubview:_stickers];
+    [_field.contentView addSubview:_stickers];
 
     _send = [UIButton buttonWithType:UIButtonTypeCustom];
     [_send addTarget:self action:@selector(sendTapped) forControlEvents:UIControlEventTouchUpInside];
-    [_panel addSubview:_send];
+    [_field.contentView addSubview:_send];
     [self updateSendButton];
 }
 
@@ -488,7 +490,7 @@ static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
         // The send button: SendIcon on an accent circle.
         image = NGCachedImage(@"send-button", ^{
             UIImage *icon = [UIImage imageNamed:@"input_send"];
-            CGFloat d = 33.0f;
+            CGFloat d = 34.0f;
             UIGraphicsBeginImageContextWithOptions(CGSizeMake(d, d), NO, 0);
             [[NGTheme accentColor] setFill];
             [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(0, 0, d, d)] fill];
@@ -506,40 +508,50 @@ static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
 }
 
 - (CGFloat)fieldHeight {
-    if (!_textView) return 33.0f;
+    if (!_textView) return 40.0f;
     CGFloat height;
     if ([_textView respondsToSelector:@selector(textContainer)]) {
         height = [_textView sizeThatFits:CGSizeMake(_textView.bounds.size.width, CGFLOAT_MAX)].height;
     } else {
         height = _textView.contentSize.height;
     }
-    return MIN(MAX(ceilf(height) - 3.0f, 33.0f), 104.0f);
+    return MIN(MAX(ceilf(height) + 2.0f, 40.0f), 110.0f);
 }
 
 - (void)layoutViews {
     CGFloat w = self.view.bounds.size.width, h = self.view.bounds.size.height;
+    const CGFloat bottomInset = 8.0f;
     CGFloat fieldH = [self fieldHeight];
-    CGFloat panelH = [self isChannel] ? 45.0f : fieldH + 12.0f;
+    CGFloat panelH = ([self isChannel] ? 44.0f : fieldH) + bottomInset + 8.0f;
     _panel.frame = CGRectMake(0, h - _keyboardOverlap - panelH, w, panelH);
-    _panelLine.frame = CGRectMake(0, 0, w, NGPx());
-    _table.frame = CGRectMake(0, 0, w, _panel.frame.origin.y);
+    _table.frame = CGRectMake(0, 0, w, _panel.frame.origin.y + 8.0f);
+    _header.frame = CGRectMake(0, 0, w, [NGHeaderView height]);
+    [self.view bringSubviewToFront:_header];
 
     if ([self isChannel]) {
-        _channelButton.frame = _panel.bounds;
+        UIView *glass = [_panel viewWithTag:1];
+        CGFloat bw = MIN(w - 32.0f, [NGTheme widthOfText:_channelButton.currentTitle font:_channelButton.titleLabel.font] + 48.0f);
+        glass.frame = CGRectMake(floorf((w - bw) / 2.0f), 8.0f, bw, 44.0f);
+        _channelButton.frame = glass.bounds;
         return;
     }
-    _attach.frame = CGRectMake(2.0f, panelH - 45.0f, 40.0f, 45.0f);
-    _send.frame = CGRectMake(w - 44.0f, panelH - 45.0f, 44.0f, 45.0f);
-    _field.frame = CGRectMake(44.0f, 6.0f, w - 44.0f - 46.0f, fieldH);
-    _textView.frame = CGRectMake(4.0f, -2.0f, _field.bounds.size.width - 8.0f - 28.0f, fieldH + 4.0f);
-    _textView.scrollEnabled = fieldH >= 104.0f;
-    _placeholder.frame = CGRectMake(12.0f, floorf((33.0f - 21.0f) / 2.0f), 200.0f, 21.0f);
-    _stickers.frame = CGRectMake(_field.bounds.size.width - 30.0f, fieldH - 29.0f, 24.0f, 24.0f);
+    _attachGlass.frame = CGRectMake(8.0f, 8.0f + fieldH - 40.0f, 40.0f, 40.0f);
+    _attach.frame = _attachGlass.bounds;
+    CGFloat fieldX = 8.0f + 40.0f + 6.0f;
+    _field.frame = CGRectMake(fieldX, 8.0f, w - fieldX - 8.0f, fieldH);
+    CGFloat fw = _field.bounds.size.width;
+    _send.frame = CGRectMake(fw - 40.0f, fieldH - 40.0f, 40.0f, 40.0f);
+    _stickers.frame = CGRectMake(fw - 40.0f - 26.0f, fieldH - 32.0f, 24.0f, 24.0f);
+    BOOL hasText = _textView.text.length > 0;
+    _textView.frame = CGRectMake(6.0f, -1.0f, fw - 6.0f - (hasText ? 40.0f : 66.0f), fieldH + 2.0f);
+    _textView.scrollEnabled = fieldH >= 110.0f;
+    _placeholder.frame = CGRectMake(14.0f, floorf((40.0f - 21.0f) / 2.0f), 200.0f, 21.0f);
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillChange:) name:UIKeyboardWillChangeFrameNotification object:nil];
+    [self.navigationController setNavigationBarHidden:YES animated:animated];
     [self layoutViews];
     [_table reloadData];
     [self scrollToBottomAnimated:NO];

@@ -8,12 +8,52 @@
 
 static void NGPrepareTable(UITableView *table, UIColor *background) {
     table.separatorStyle = UITableViewCellSeparatorStyleNone;
-    table.contentInset = UIEdgeInsetsMake(0, 0, NGTabBarHeight, 0);
+    table.contentInset = UIEdgeInsetsMake([NGHeaderView height], 0, NGTabBarHeight, 0);
     table.scrollIndicatorInsets = table.contentInset;
+    table.contentOffset = CGPointMake(0, -[NGHeaderView height]);
     table.backgroundColor = background;
     table.backgroundView = nil;
     table.tableFooterView = [[UIView alloc] initWithFrame:CGRectZero];
 }
+
+#pragma mark - List base
+
+@implementation NGListController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    if ([self respondsToSelector:@selector(setAutomaticallyAdjustsScrollViewInsets:)]) {
+        self.automaticallyAdjustsScrollViewInsets = NO;
+    }
+    _header = [[NGHeaderView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, [NGHeaderView height])];
+    _header.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    _header.title = self.title;
+    [self.tableView addSubview:_header];
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [self.navigationController setNavigationBarHidden:YES animated:animated];
+}
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    [self pinHeader];
+}
+
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView {
+    [self pinHeader];
+}
+
+- (void)pinHeader {
+    CGRect frame = _header.frame;
+    frame.origin.y = self.tableView.contentOffset.y;
+    frame.size.width = self.tableView.bounds.size.width;
+    _header.frame = frame;
+    [self.tableView bringSubviewToFront:_header];
+}
+
+@end
 
 #pragma mark - Chats
 
@@ -23,7 +63,8 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
 @implementation NGChatListController {
     NSArray *_rows;
     NSString *_query;
-    UIBarButtonItem *_editItem;
+    NGGlassButton *_editButton;
+    UIView *_searchPlaceholder;
 }
 
 - (instancetype)init {
@@ -40,24 +81,22 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
     self.tableView.rowHeight = 76;
     self.tableView.tableHeaderView = [self searchHeader];
 
-    _editItem = [NGTheme barButtonWithTitle:@"Изм." bold:NO target:self action:@selector(toggleEditing)];
-    self.navigationItem.leftBarButtonItem = _editItem;
-    self.navigationItem.rightBarButtonItem = [NGTheme barButtonWithAsset:@"nav_compose" target:self action:@selector(compose)];
+    _editButton = [NGGlassButton textButton:@"Изм." target:self action:@selector(toggleEditing)];
+    self.header.leftButtons = @[ _editButton ];
+    // ChatListController: the compose button has the accent tint.
+    self.header.rightButtons = @[ [NGGlassButton iconButton:@"nav_compose" tint:NGGlassButtonTintAccent target:self action:@selector(compose)] ];
 }
 
+// The search field under the bar: a 44pt capsule, icon and placeholder centred.
 - (UIView *)searchHeader {
     CGFloat w = self.view.bounds.size.width;
-    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, 52)];
+    UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, 56)];
     header.backgroundColor = [UIColor whiteColor];
-    UIView *field = [[UIView alloc] initWithFrame:CGRectMake(8, 8, w - 16, 36)];
-    field.backgroundColor = NGHex(0xe9e9e9);
-    field.layer.cornerRadius = 10;
+    UIView *field = [[UIView alloc] initWithFrame:CGRectMake(16, 4, w - 32, 44)];
+    field.backgroundColor = NGHexA(0x767680, 0.12f);
+    field.layer.cornerRadius = 22;
     field.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    UIImageView *icon = [[UIImageView alloc] initWithImage:NGTintedAsset(@"list_search", NGHex(0x8e8e93))];
-    icon.frame = CGRectMake(3, 3, 30, 30);
-    [field addSubview:icon];
-    UITextField *text = [[UITextField alloc] initWithFrame:CGRectMake(32, 0, w - 16 - 40, 36)];
-    text.placeholder = @"Поиск";
+    UITextField *text = [[UITextField alloc] initWithFrame:CGRectMake(16, 0, w - 32 - 32, 44)];
     text.font = [NGTheme regularFont:17];
     text.contentVerticalAlignment = UIControlContentVerticalAlignmentCenter;
     text.clearButtonMode = UITextFieldViewModeWhileEditing;
@@ -67,6 +106,21 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
     text.delegate = self;
     [text addTarget:self action:@selector(searchChanged:) forControlEvents:UIControlEventEditingChanged];
     [field addSubview:text];
+
+    UIView *placeholder = [[UIView alloc] initWithFrame:CGRectZero];
+    placeholder.userInteractionEnabled = NO;
+    UIImageView *icon = [[UIImageView alloc] initWithImage:NGTintedAsset(@"list_search", NGHex(0x8e8e93))];
+    UILabel *label = [NGTheme labelWithFont:[NGTheme regularFont:17] color:NGHex(0x8e8e93)];
+    label.text = @"Поиск";
+    CGFloat lw = [NGTheme widthOfText:label.text font:label.font];
+    icon.frame = CGRectMake(0, 7, 30, 30);
+    label.frame = CGRectMake(32, 0, lw, 44);
+    placeholder.frame = CGRectMake(floorf((field.bounds.size.width - 32 - lw) / 2), 0, 32 + lw, 44);
+    placeholder.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin;
+    [placeholder addSubview:icon];
+    [placeholder addSubview:label];
+    [field addSubview:placeholder];
+    _searchPlaceholder = placeholder;
     [header addSubview:field];
     return header;
 }
@@ -100,6 +154,7 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
 
 - (void)searchChanged:(UITextField *)field {
     _query = field.text;
+    _searchPlaceholder.hidden = field.text.length > 0;
     [self reloadRows];
 }
 
@@ -110,9 +165,8 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
 
 - (void)toggleEditing {
     [self setEditing:!self.editing animated:YES];
-    [NGTheme setTitle:(self.editing ? @"Готово" : @"Изм.") ofBarButton:_editItem];
-    UIButton *button = (UIButton *)_editItem.customView;
-    button.titleLabel.font = self.editing ? [NGTheme mediumFont:17] : [NGTheme regularFont:17];
+    _editButton.title = self.editing ? @"Готово" : @"Изм.";
+    [self.header setNeedsLayout];
 }
 
 - (void)compose {
@@ -185,10 +239,11 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
     NGPrepareTable(self.tableView, [UIColor whiteColor]);
     if (self.onSelect) {
         self.title = @"Новое сообщение";
-        self.navigationItem.leftBarButtonItem = [NGTheme barButtonWithTitle:@"Отмена" bold:NO target:self action:@selector(cancel)];
+        self.header.title = self.title;
+        self.header.leftButtons = @[ [NGGlassButton textButton:@"Отмена" target:self action:@selector(cancel)] ];
     } else {
-        self.navigationItem.leftBarButtonItem = [NGTheme barButtonWithTitle:@"Сорт." bold:NO target:nil action:NULL];
-        self.navigationItem.rightBarButtonItem = [NGTheme barButtonWithAsset:@"contacts_add" target:nil action:NULL];
+        self.header.leftButtons = @[ [NGGlassButton textButton:@"Сорт." target:nil action:NULL] ];
+        self.header.rightButtons = @[ [NGGlassButton iconButton:@"contacts_add" tint:NGGlassButtonTintGeneric target:nil action:NULL] ];
     }
 }
 
@@ -266,8 +321,8 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
     [NGTheme disableExtendedLayoutFor:self];
     NGPrepareTable(self.tableView, [UIColor whiteColor]);
     self.tableView.rowHeight = 52;
-    self.navigationItem.leftBarButtonItem = [NGTheme barButtonWithTitle:@"Изм." bold:NO target:nil action:NULL];
-    self.navigationItem.rightBarButtonItem = [NGTheme barButtonWithAsset:@"settings_phone" target:nil action:NULL];
+    self.header.leftButtons = @[ [NGGlassButton textButton:@"Изм." target:nil action:NULL] ];
+    self.header.rightButtons = @[ [NGGlassButton iconButton:@"settings_phone" tint:NGGlassButtonTintGeneric target:nil action:NULL] ];
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
@@ -395,7 +450,7 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
     [NGTheme disableExtendedLayoutFor:self];
     NGPrepareTable(self.tableView, [NGTheme blocksBackgroundColor]);
     self.tableView.tableHeaderView = [self profileHeader];
-    self.navigationItem.rightBarButtonItem = [NGTheme barButtonWithTitle:@"Изм." bold:NO target:nil action:NULL];
+    self.header.rightButtons = @[ [NGGlassButton textButton:@"Изм." target:nil action:NULL] ];
 }
 
 - (UIView *)profileHeader {

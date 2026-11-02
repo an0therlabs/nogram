@@ -317,3 +317,122 @@ UIImage *NGSettingsIcon(NSString *assetName, NSArray *backgroundColors) {
     });
 }
 
+
+#pragma mark - Glass
+
+const CGFloat NGGlassShadowInset = 32.0f;
+
+UIImage *NGLegacyShadowImage(CGFloat cornerRadius) {
+    const CGFloat shadowInset = NGGlassShadowInset, shadowIntensity = 0.04f, shadowBlur = 40.0f;
+    const CGFloat shadowInnerInset = 0.5f;
+    CGFloat diameter = MAX(1.0f, cornerRadius * 2.0f);
+    CGSize size = CGSizeMake(shadowInset * 2.0f + diameter, shadowInset * 2.0f + diameter);
+    UIImage *image = NGGenerateRotatedImage(size, ^(CGSize size, CGContextRef context) {
+        CGContextClearRect(context, CGRectMake(0, 0, size.width, size.height));
+        CGRect shadowRect = CGRectMake(shadowInset + shadowInnerInset, shadowInset + shadowInnerInset,
+                                       size.width - shadowInset * 2.0f - shadowInnerInset * 2.0f,
+                                       size.height - shadowInset * 2.0f - shadowInnerInset * 2.0f);
+        CGContextSetFillColorWithColor(context, [UIColor blackColor].CGColor);
+        CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 1.0f), shadowBlur, [UIColor colorWithWhite:0.0f alpha:shadowIntensity].CGColor);
+        CGContextFillEllipseInRect(context, shadowRect);
+        CGContextSetFillColorWithColor(context, [UIColor clearColor].CGColor);
+        CGContextSetBlendMode(context, kCGBlendModeCopy);
+        CGContextFillEllipseInRect(context, shadowRect);
+    });
+    return [image stretchableImageWithLeftCapWidth:(NSInteger)(shadowInset + cornerRadius) topCapHeight:(NSInteger)(shadowInset + cornerRadius)];
+}
+
+UIImage *NGLegacyGlassImage(CGFloat cornerRadius, CGFloat borderWidthFactor, UIColor *fillColor) {
+    const CGFloat inset = NGGlassShadowInset;
+    const BOOL isDark = NO;
+    CGSize size = CGSizeMake(cornerRadius * 2.0f, cornerRadius * 2.0f);
+    if (size.width <= 0.0f) size = CGSizeMake(2.0f, 2.0f);
+    CGSize innerSize = size;
+    size.width += inset * 2.0f;
+    size.height += inset * 2.0f;
+
+    UIGraphicsBeginImageContextWithOptions(size, NO, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextClearRect(context, CGRectMake(0, 0, size.width, size.height));
+
+    // addShadow(context, isOuter: true, ...)
+    void (^addOuterShadow)(CGFloat, CGFloat, UIColor *) = ^(CGFloat blur, CGFloat spread, UIColor *shadowColor) {
+        blur += fabsf((float)spread);
+        CGContextBeginTransparencyLayer(context, NULL);
+        CGContextSaveGState(context);
+        CGRect spreadRect = CGRectInset(CGRectMake(inset, inset, innerSize.width, innerSize.height), 0.25f, 0.25f);
+        UIBezierPath *spreadPath = [UIBezierPath bezierPathWithRoundedRect:spreadRect cornerRadius:MIN(spreadRect.size.width, spreadRect.size.height) * 0.5f];
+        CGContextSetShadowWithColor(context, CGSizeZero, blur, shadowColor.CGColor);
+        CGContextSetFillColorWithColor(context, [UIColor blackColor].CGColor);
+        CGContextAddPath(context, spreadPath.CGPath);
+        CGContextFillPath(context);
+        CGRect cleanRect = CGRectMake(inset, inset, innerSize.width, innerSize.height);
+        UIBezierPath *cleanPath = [UIBezierPath bezierPathWithRoundedRect:cleanRect cornerRadius:MIN(cleanRect.size.width, cleanRect.size.height) * 0.5f];
+        CGContextSetBlendMode(context, kCGBlendModeCopy);
+        CGContextSetFillColorWithColor(context, [UIColor clearColor].CGColor);
+        CGContextAddPath(context, cleanPath.CGPath);
+        CGContextFillPath(context);
+        CGContextSetBlendMode(context, kCGBlendModeNormal);
+        CGContextRestoreGState(context);
+        CGContextEndTransparencyLayer(context);
+    };
+    addOuterShadow(30.0f, 0.0f, [UIColor colorWithWhite:0.0f alpha:0.045f]);
+    addOuterShadow(20.0f, 0.0f, [UIColor colorWithWhite:0.0f alpha:0.01f]);
+
+    CGFloat h = 0, s = 0, b = 0, a = 0;
+    if (![fillColor getHue:&h saturation:&s brightness:&b alpha:&a]) {
+        CGFloat white = 0;
+        [fillColor getWhite:&white alpha:&a];
+        s = 0; b = white;
+    }
+
+    // innerImage
+    CGContextSaveGState(context);
+    CGContextSetFillColorWithColor(context, fillColor.CGColor);
+    CGRect ellipseRect = CGRectInset(CGRectMake(0, 0, size.width, size.height), inset, inset);
+    CGContextFillEllipseInRect(context, ellipseRect);
+
+    CGFloat lineWidth = 0.8f * borderWidthFactor;
+    UIColor *strokeColor;
+    CGBlendMode blendMode;
+    CGFloat baseAlpha = isDark ? 0.3f : 0.6f;
+    if (s == 0.0f && fabsf((float)(a - 0.7f)) < 0.1f && !isDark) {
+        blendMode = kCGBlendModeNormal;
+        strokeColor = [UIColor colorWithWhite:1.0f alpha:baseAlpha];
+    } else if (s <= 0.3f && !isDark) {
+        blendMode = kCGBlendModeNormal;
+        strokeColor = [UIColor colorWithWhite:1.0f alpha:0.7f * baseAlpha];
+    } else if (b >= 0.2f) {
+        CGFloat maxAlpha = isDark ? 0.7f : 0.8f;
+        blendMode = kCGBlendModeOverlay;
+        strokeColor = [UIColor colorWithWhite:1.0f alpha:MAX(0.5f, MIN(1.0f, maxAlpha * s)) * baseAlpha];
+    } else {
+        blendMode = kCGBlendModeNormal;
+        strokeColor = [UIColor colorWithWhite:1.0f alpha:0.5f * baseAlpha];
+    }
+    CGContextSetStrokeColorWithColor(context, strokeColor.CGColor);
+    CGContextSetLineWidth(context, lineWidth);
+    CGContextAddEllipseInRect(context, ellipseRect);
+    CGContextClip(context);
+
+    ellipseRect = CGRectInset(ellipseRect, lineWidth * 0.5f, lineWidth * 0.5f);
+    CGContextSetBlendMode(context, blendMode);
+    CGFloat radius = ellipseRect.size.height * 0.5f;
+    CGFloat smallerRadius = radius - lineWidth * 1.33f;
+    CGFloat minX = CGRectGetMinX(ellipseRect), minY = CGRectGetMinY(ellipseRect), maxX = CGRectGetMaxX(ellipseRect), maxY = CGRectGetMaxY(ellipseRect);
+    CGContextMoveToPoint(context, minX, minY + radius);
+    CGContextAddArcToPoint(context, minX, minY, minX + radius, minY, radius);
+    CGContextAddLineToPoint(context, maxX - smallerRadius, minY);
+    CGContextAddArcToPoint(context, maxX, minY, maxX, minY + smallerRadius, smallerRadius);
+    CGContextAddLineToPoint(context, maxX, maxY - radius);
+    CGContextAddArcToPoint(context, maxX, maxY, maxX - radius, maxY, radius);
+    CGContextAddLineToPoint(context, minX + smallerRadius, maxY);
+    CGContextAddArcToPoint(context, minX, maxY, minX, maxY - smallerRadius, smallerRadius);
+    CGContextClosePath(context);
+    CGContextStrokePath(context);
+    CGContextRestoreGState(context);
+
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return [image stretchableImageWithLeftCapWidth:(NSInteger)(size.width * 0.5f) topCapHeight:(NSInteger)(size.height * 0.5f)];
+}
