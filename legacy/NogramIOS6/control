@@ -7,3 +7,5 @@ Maintainer: nogram
 Author: nogram
 Section: Social
 Depends: firmware (>= 6.0)
+Depiction: https://an0therlabs.github.io/nogram/depiction.html
+Homepage: https://an0therlabs.github.io/nogram/
