@@ -1,2 +1,3 @@
 .theos/
 packages/
+Sources/NGConfig.local.h

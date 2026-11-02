@@ -1,4 +1,4 @@
-#import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
 
 // The account's connection to Telegram over the ngmt MTProto core: one DC,
 // one permanent auth key (kept in NSUserDefaults), calls made in order on a
@@ -28,5 +28,17 @@
 - (void)sendText:(NSString *)text toChat:(id)chat completion:(void (^)(NSString *error))completion;
 // messages.readHistory / channels.readHistory up to maxId
 - (void)markRead:(id)chat maxId:(int32_t)maxId;
+
+// contacts.getContacts → NGUser objects.
+- (void)loadContacts:(void (^)(NSArray *users, NSString *error))completion;
+
+// Images (upload.getFile from the file's DC, with a disk cache). The
+// completion runs on the main queue, only when an image was found.
+- (UIImage *)cachedImageForKey:(NSString *)key;
+- (void)loadAvatarForUser:(id)user completion:(void (^)(UIImage *image))completion;
+- (void)loadAvatarForChat:(id)chat completion:(void (^)(UIImage *image))completion;
+- (void)loadPhoto:(NSDictionary *)photo completion:(void (^)(UIImage *image))completion;
+// The blurred inline preview Telegram sends with a photo (photoStrippedSize).
++ (UIImage *)imageFromStrippedThumb:(NSData *)data;
 
 @end

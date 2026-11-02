@@ -290,10 +290,16 @@ static NGMessage *NGIn(NSString *text, double minutesAgo, NGUser *author) {
 - (NGChat *)chatWithUser:(NGUser *)user {
     for (NGChat *chat in self.chats) {
         if (chat.user == user) return chat;
+        if (user.userId && chat.peerId == user.userId && [chat.peerKey hasPrefix:@"u"]) return chat;
     }
     NGChat *chat = [NGChat new];
     chat.kind = NGChatKindPrivate;
     chat.user = user;
+    if (user.userId) {
+        chat.peerKey = [NSString stringWithFormat:@"u%lld", user.userId];
+        chat.peerId = user.userId;
+        chat.accessHash = user.accessHash;
+    }
     chat.title = [user displayName];
     chat.colorIndex = user.colorIndex;
     return chat;

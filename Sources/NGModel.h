@@ -25,6 +25,12 @@ typedef NS_ENUM(NSInteger, NGChatKind) {
 @property (nonatomic, copy) NSString *birthday;
 @property (nonatomic, copy) NSString *musicTitle;    // the profile's saved music (peerInfoProfileMusic)
 @property (nonatomic, copy) NSString *musicArtist;
+// Server identity and profile photo (users loaded by NGTelegram).
+@property (nonatomic) int64_t userId;
+@property (nonatomic) int64_t accessHash;
+@property (nonatomic) int64_t photoId;
+@property (nonatomic) int photoDc;
+@property (nonatomic, strong) NSData *photoStripped;
 + (instancetype)userWithFirst:(NSString *)first last:(NSString *)last color:(NSInteger)color online:(BOOL)online lastSeen:(NSString *)lastSeen;
 - (NSString *)displayName;
 - (NSString *)initials;
@@ -38,6 +44,8 @@ typedef NS_ENUM(NSInteger, NGChatKind) {
 @property (nonatomic) NGMessageStatus status;
 @property (nonatomic, strong) NGUser *author;
 @property (nonatomic) int32_t remoteId;   /* server message id, 0 for local */
+// A photo: id, access_hash, file_reference, dc, thumb type, w, h, stripped.
+@property (nonatomic, strong) NSDictionary *photo;
 + (instancetype)messageWithText:(NSString *)text outgoing:(BOOL)outgoing date:(NSDate *)date;
 @end
 
@@ -61,6 +69,9 @@ typedef NS_ENUM(NSInteger, NGChatKind) {
 @property (nonatomic) int64_t peerId;
 @property (nonatomic) int64_t accessHash;
 @property (nonatomic) int32_t readOutboxMaxId;
+@property (nonatomic) int64_t photoId;          /* group/channel photo */
+@property (nonatomic) int photoDc;
+@property (nonatomic, strong) NSData *photoStripped;
 - (NGMessage *)lastMessage;
 - (NSString *)initials;
 - (NSString *)statusText;

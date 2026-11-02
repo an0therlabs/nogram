@@ -117,7 +117,11 @@ static ngtl_node *decode_type(reader *r, const char *type, size_t tlen, int dept
         memcpy(&n->d, &bits, 8);
         return n;
     }
-    if (IS("string") || IS("bytes")) return rd_bytes(r);
+    if (IS("string") || IS("bytes")) {
+        ngtl_node *n = rd_bytes(r);
+        if (n) n->is_string = IS("string");
+        return n;
+    }
     if (IS("int128") || IS("int256")) {
         size_t n = IS("int128") ? 16 : 32;
         if (r->pos + n > r->len) { fail(r, "truncated%s %u", NULL, 0); return NULL; }

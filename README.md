@@ -81,7 +81,7 @@ SHA-256, сериализация TL, `rpc_result` / `rpc_error` / `msg_containe
 (ObjC): `initConnection`, `auth.sendCode`, `auth.signIn`, переезд на DC по `*_MIGRATE_X`, ключ хранится
 в NSUserDefaults. Экраны входа — `NGLogin.m` (как в AuthorizationUI).
 
-**Перед сборкой** впишите свои `NG_API_ID` и `NG_API_HASH` в `Sources/NGConfig.h`
+**Перед сборкой** создайте `Sources/NGConfig.local.h` (он в .gitignore) с `#define NG_API_ID …` и `#define NG_API_HASH "…"`
 (my.telegram.org → API development tools). Без них экран входа предупредит и не даст продолжить.
 
 Тест ядра на Linux/macOS с настоящим тестовым сервером Telegram (создаёт ключ, ping, `initConnection`):
@@ -98,4 +98,9 @@ cc -O2 -ISources/mtproto tests/ngmt_test.c -lssl -lcrypto -lz -o ngmt_test && ./
 (`tools/gen_tl_schema.py` → `ngtl_schema.c`; перегенерировать при смене слоя), тест — `tests/ngtl_test.c`.
 
 Пока не умеет: вход с облачным паролем (SRP), обновления в реальном времени (вместо них опрос),
-фото/аватарки, медиа (показывается подписью «🖼 Фото», «🎤 Голосовое сообщение»…), контакты и звонки — демо.
+видео/файлы/голосовые (подписью «🎤 Голосовое сообщение»…), звонки — демо.
+
+Фото в чатах и аватарки грузятся через `upload.getFile` с нужного DC (перенос авторизации
+`auth.exportAuthorization` → `auth.importAuthorization`), с размытым превью из `photoStrippedSize`
+и дисковым кешем; контакты — `contacts.getContacts`. Живой тест на тестовых серверах:
+`tests/ngmt_live_test.c` (NG_API_ID/NG_API_HASH из окружения).

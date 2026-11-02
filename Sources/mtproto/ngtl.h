@@ -31,6 +31,7 @@ typedef struct ngtl_node {
     double d;
     uint8_t *bytes;       /* string / bytes, NUL-terminated copy */
     size_t len;
+    int is_string;        /* TL string (UTF-8 text) rather than bytes */
     struct ngtl_node **items;   /* object fields or vector elements */
     int count, cap;
 } ngtl_node;

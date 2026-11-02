@@ -67,6 +67,9 @@ static UIImage *NGCachedImage(NSString *key, UIImage *(^make)(void)) {
 #pragma mark - Message layout
 
 typedef struct {
+    BOOL hasImage;
+    BOOL statusOverImage;   // a photo without a caption: the date sits on the image
+    CGRect imageFrame;
     CGSize contentSize;     // the bubble's background frame size
     CGRect textFrame;       // in background coordinates
     CGRect statusFrame;
@@ -95,9 +98,49 @@ static CGFloat NGStatusWidth(NGMessage *m, BOOL checks) {
     return 5.0f + [NGTheme widthOfText:[NGTheme timeString:m.date] font:NGDateFont()] + (checks ? 13.0f : 0.0f);
 }
 
+// ChatMessageItemImageLayoutConstants (compact): the image 2pt inside the
+// bubble, fitted to 300 x 380 (here also to the screen), at least 170 x 74.
+static CGSize NGPhotoSize(NSDictionary *photo, CGFloat maximumWidth) {
+    CGFloat w = MAX(1, [photo[@"w"] floatValue]), h = MAX(1, [photo[@"h"] floatValue]);
+    CGFloat maxW = MIN(maximumWidth - NGBubbleTailInset - 4.0f, 300.0f), maxH = 300.0f;
+    CGFloat scale = MIN(maxW / w, maxH / h);
+    CGSize size = CGSizeMake(floorf(w * scale), floorf(h * scale));
+    size.width = MAX(size.width, MIN(170.0f, maxW));
+    size.height = MAX(size.height, 74.0f);
+    return size;
+}
+
 static NGBubbleLayout NGLayoutMessage(NGMessage *m, CGFloat maximumWidth, BOOL incoming, BOOL showName, BOOL checks) {
     NGBubbleLayout l;
+    memset(&l, 0, sizeof(l));
     CGFloat tail = incoming ? NGBubbleTailInset : 0.0f;
+    if (m.photo) {
+        CGSize image = NGPhotoSize(m.photo, maximumWidth);
+        CGFloat top = showName ? NGTextInsetTop() + 20.0f : 2.0f;
+        l.hasImage = YES;
+        l.nameHeight = showName ? 20.0f : 0.0f;
+        l.imageFrame = CGRectMake(tail + 2.0f, top, image.width, image.height);
+        if (m.text.length == 0) {
+            l.statusOverImage = YES;
+            CGFloat statusWidth = NGStatusWidth(m, checks);
+            l.contentSize = CGSizeMake(NGBubbleTailInset + image.width + 4.0f, top + image.height + 2.0f);
+            l.statusFrame = CGRectMake(CGRectGetMaxX(l.imageFrame) - 8.0f - statusWidth, CGRectGetMaxY(l.imageFrame) - 6.0f - NGStatusHeight, statusWidth, NGStatusHeight);
+            return l;
+        }
+        // A caption: laid out like a text message under the image, no wider than it.
+        CGFloat captionMax = image.width + 4.0f - NGTextInsetLeft - NGTextInsetRight;
+        UIFont *font = NGMessageFont();
+        CGSize textSize = [NGTheme sizeOfText:m.text font:font width:captionMax];
+        CGFloat statusWidth = NGStatusWidth(m, checks);
+        CGFloat lastLine = NGLastLineWidth(m.text, font, captionMax);
+        BOOL inlineStatus = lastLine + statusWidth <= captionMax;
+        CGFloat textTop = CGRectGetMaxY(l.imageFrame) + NGTextInsetTop();
+        CGFloat textBottom = textTop + textSize.height + (inlineStatus ? 0.0f : NGStatusHeight);
+        l.textFrame = CGRectMake(tail + NGTextInsetLeft, textTop, textSize.width, textSize.height);
+        l.statusFrame = CGRectMake(tail + image.width + 4.0f - NGTextInsetRight - statusWidth, textBottom - NGStatusHeight, statusWidth, NGStatusHeight);
+        l.contentSize = CGSizeMake(NGBubbleTailInset + image.width + 4.0f, textBottom + NGTextInsetBottom());
+        return l;
+    }
     CGFloat maxTextWidth = maximumWidth - NGBubbleTailInset - NGTextInsetLeft - NGTextInsetRight;
     UIFont *font = NGMessageFont();
     CGSize textSize = [NGTheme sizeOfText:m.text font:font width:maxTextWidth];
@@ -147,6 +190,8 @@ static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
     UIImageView *_clockFrame;
     UIImageView *_clockMin;
     NGAvatarView *_avatar;
+    UIImageView *_photoView;
+    UIView *_statusPill;
 }
 
 + (CGFloat)heightForMessage:(NGMessage *)m width:(CGFloat)width mergedTop:(BOOL)mt mergedBottom:(BOOL)mb showName:(BOOL)name avatarSpace:(BOOL)avatarSpace checks:(BOOL)checks {
@@ -172,7 +217,15 @@ static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
         _avatar = [[NGAvatarView alloc] initWithFrame:CGRectMake(0, 0, 34, 34)];
         [self.contentView addSubview:_avatar];
         [self.contentView addSubview:_bubbleContainer];
-        for (UIView *v in @[ _bubble, _name, _text, _date, _checkSent, _checkRead, _clockFrame, _clockMin ]) {
+        _photoView = [[UIImageView alloc] initWithFrame:CGRectZero];
+        _photoView.contentMode = UIViewContentModeScaleAspectFill;
+        _photoView.clipsToBounds = YES;
+        _photoView.layer.cornerRadius = 15.0f;   // image.defaultCornerRadius (compact)
+        _photoView.backgroundColor = NGHexA(0x000000, 0.1f);
+        _statusPill = [[UIView alloc] initWithFrame:CGRectZero];
+        _statusPill.backgroundColor = NGHexA(0x000000, 0.45f);   // mediaDateAndStatusFillColor
+        _statusPill.layer.cornerRadius = 9.0f;
+        for (UIView *v in @[ _bubble, _photoView, _statusPill, _name, _text, _date, _checkSent, _checkRead, _clockFrame, _clockMin ]) {
             [_bubbleContainer addSubview:v];
         }
     }
@@ -215,6 +268,29 @@ static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
     _avatar.hidden = !self.showAvatar;
     if (self.showAvatar) [_avatar configureWithUser:m.author];
     _avatar.showsOnline = NO;
+
+    // A photo: the stripped preview at once, then the downloaded size.
+    _photoView.hidden = m.photo == nil;
+    BOOL overImage = m.photo && m.text.length == 0;
+    _statusPill.hidden = !overImage;
+    if (overImage) {
+        _date.textColor = [UIColor whiteColor];
+        UIColor *white = [UIColor whiteColor];
+        _checkSent.image = NGCachedImage(@"check-full-white", ^{ return NGCheckImage(NO, white, 11.0f); });
+        _checkRead.image = NGCachedImage(@"check-partial-white", ^{ return NGCheckImage(YES, white, 11.0f); });
+    }
+    if (m.photo) {
+        NSString *key = [NSString stringWithFormat:@"p%@_%@", m.photo[@"id"], m.photo[@"type"]];
+        UIImage *cached = [[NGTelegram shared] cachedImageForKey:key];
+        _photoView.image = cached ?: [NGTelegram imageFromStrippedThumb:m.photo[@"stripped"]];
+        if (!cached) {
+            __weak NGMessageCell *weakSelf = self;
+            [[NGTelegram shared] loadPhoto:m.photo completion:^(UIImage *image) {
+                NGMessageCell *strongSelf = weakSelf;
+                if (strongSelf && strongSelf.message == m) strongSelf->_photoView.image = image;
+            }];
+        }
+    }
     [self setNeedsLayout];
 }
 
@@ -255,8 +331,12 @@ static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
     // ChatMessageBackground: the image overhangs the background frame by 1pt.
     _bubble.frame = CGRectInset(_bubbleContainer.bounds, -1.0f, -1.0f);
 
-    _name.frame = CGRectMake(l.textFrame.origin.x, NGTextInsetTop(), l.contentSize.width - l.textFrame.origin.x - NGTextInsetRight, 18.0f);
+    CGFloat nameX = (incoming ? NGBubbleTailInset : 0.0f) + NGTextInsetLeft;
+    _name.frame = CGRectMake(nameX, NGTextInsetTop(), l.contentSize.width - nameX - NGTextInsetRight, 18.0f);
     _text.frame = l.textFrame;
+    _text.hidden = m.text.length == 0;
+    _photoView.frame = l.imageFrame;
+    _statusPill.frame = CGRectInset(l.statusFrame, -2.0f, -1.0f);
 
     CGRect s = l.statusFrame;
     CGFloat dateWidth = [NGTheme widthOfText:_date.text font:_date.font];

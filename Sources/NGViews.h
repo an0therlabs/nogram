@@ -8,6 +8,7 @@
 @property (nonatomic, copy) NSString *initials;
 @property (nonatomic) BOOL hasIcon;
 @property (nonatomic) BOOL showsOnline;
+@property (nonatomic, strong) UIImage *image;   /* the profile photo, over the gradient */
 - (void)configureWithChat:(NGChat *)chat;
 - (void)configureWithUser:(NGUser *)user;
 @end

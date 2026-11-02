@@ -1,9 +1,12 @@
 #import "NGViews.h"
 #import "NGOriginal.h"
+#import "NGTelegram.h"
 
 #pragma mark - Avatar
 
-@implementation NGAvatarView
+@implementation NGAvatarView {
+    NSString *_photoKey;
+}
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
@@ -15,7 +18,37 @@
     return self;
 }
 
+// The stripped thumb at once, then the downloaded photo (if this view still
+// shows the same peer when it arrives).
+- (void)loadPhotoForKey:(NSString *)key stripped:(NSData *)stripped request:(void (^)(void (^done)(UIImage *)))request {
+    _photoKey = key;
+    self.image = key ? ([[NGTelegram shared] cachedImageForKey:key] ?: (stripped ? [NGTelegram imageFromStrippedThumb:stripped] : nil)) : nil;
+    if (!key) return;
+    __weak NGAvatarView *weakSelf = self;
+    request(^(UIImage *image) {
+        NGAvatarView *strongSelf = weakSelf;
+        if (strongSelf && [strongSelf->_photoKey isEqualToString:key]) strongSelf.image = image;
+    });
+}
+
+- (void)setImage:(UIImage *)image {
+    _image = image;
+    [self setNeedsDisplay];
+}
+
 - (void)configureWithChat:(NGChat *)chat {
+    if (chat.kind == NGChatKindPrivate && chat.user.photoId) {
+        NGUser *user = chat.user;
+        [self loadPhotoForKey:[NSString stringWithFormat:@"a%lld_%lld", user.userId, user.photoId] stripped:user.photoStripped request:^(void (^done)(UIImage *)) {
+            [[NGTelegram shared] loadAvatarForUser:user completion:done];
+        }];
+    } else if (chat.photoId && chat.peerKey) {
+        [self loadPhotoForKey:[NSString stringWithFormat:@"a%@_%lld", chat.peerKey, chat.photoId] stripped:chat.photoStripped request:^(void (^done)(UIImage *)) {
+            [[NGTelegram shared] loadAvatarForChat:chat completion:done];
+        }];
+    } else {
+        [self loadPhotoForKey:nil stripped:nil request:nil];
+    }
     self.colorIndex = chat.colorIndex;
     self.initials = [chat initials];
     self.hasIcon = chat.kind == NGChatKindSaved;
@@ -24,11 +57,28 @@
 }
 
 - (void)configureWithUser:(NGUser *)user {
+    if (user.photoId) {
+        [self loadPhotoForKey:[NSString stringWithFormat:@"a%lld_%lld", user.userId, user.photoId] stripped:user.photoStripped request:^(void (^done)(UIImage *)) {
+            [[NGTelegram shared] loadAvatarForUser:user completion:done];
+        }];
+    } else {
+        [self loadPhotoForKey:nil stripped:nil request:nil];
+    }
     self.colorIndex = user.colorIndex;
     self.initials = [user initials];
     self.hasIcon = NO;
     self.showsOnline = user.online;
     [self setNeedsDisplay];
+}
+
+- (void)drawOnlineDotWithDiameter:(CGFloat)d {
+    // recentStatusOnlineIcon(.regular): 14pt, item background ring, onlineDotColor 0x4cc91f;
+    // ChatListItem places it at (width - 14 - 2, height - 14 - 2).
+    CGRect bounds = CGRectMake(d - 14.0f - 2.0f, d - 14.0f - 2.0f, 14.0f, 14.0f);
+    [[UIColor whiteColor] setFill];
+    [[UIBezierPath bezierPathWithOvalInRect:bounds] fill];
+    [NGHex(0x4cc91f) setFill];
+    [[UIBezierPath bezierPathWithOvalInRect:CGRectInset(bounds, 2.0f, 2.0f)] fill];
 }
 
 - (void)drawRect:(CGRect)rect {
@@ -47,7 +97,17 @@
     CGContextDrawLinearGradient(ctx, gradient, CGPointZero, CGPointMake(0, d), 0);
     CGGradientRelease(gradient);
     CGColorSpaceRelease(space);
+    if (self.image) {
+        CGSize is = self.image.size;
+        CGFloat scale = MAX(d / MAX(1, is.width), d / MAX(1, is.height));
+        CGSize fit = CGSizeMake(is.width * scale, is.height * scale);
+        [self.image drawInRect:CGRectMake((d - fit.width) / 2.0f, (d - fit.height) / 2.0f, fit.width, fit.height)];
+    }
     CGContextRestoreGState(ctx);
+    if (self.image) {
+        if (self.showsOnline) [self drawOnlineDotWithDiameter:d];
+        return;
+    }
 
     if (self.hasIcon) {
         // AvatarNode .savedMessagesIcon: the asset scaled by width / 60, tinted white.
@@ -63,15 +123,7 @@
         [self.initials drawAtPoint:CGPointMake(floorf((d - size.width) / 2.0f), floorf((d - size.height) / 2.0f)) withFont:font];
     }
 
-    if (self.showsOnline) {
-        // recentStatusOnlineIcon(.regular): 14pt, item background ring, onlineDotColor 0x4cc91f;
-        // ChatListItem places it at (width - 14 - 2, height - 14 - 2).
-        CGRect bounds = CGRectMake(d - 14.0f - 2.0f, d - 14.0f - 2.0f, 14.0f, 14.0f);
-        [[UIColor whiteColor] setFill];
-        [[UIBezierPath bezierPathWithOvalInRect:bounds] fill];
-        [NGHex(0x4cc91f) setFill];
-        [[UIBezierPath bezierPathWithOvalInRect:CGRectInset(bounds, 2.0f, 2.0f)] fill];
-    }
+    if (self.showsOnline) [self drawOnlineDotWithDiameter:d];
 }
 
 @end
