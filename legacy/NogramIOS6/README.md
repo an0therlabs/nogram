@@ -19,6 +19,7 @@
 | Таббар (капсула, линза) | `TabBarComponent.swift`, `TabBarItemsLayout.swift`, `LiquidLensView.swift` | `NGTabBarController.m` |
 | Стекло (капсулы) | `GlassBackgroundComponent.swift` `generateLegacyGlassImage` / `generateLegacyShadowImage` | `NGOriginal.m`, `NGGlass.m` |
 | Шапка с пилюлями | `NavigationBarComponent`, `NavigationButtonComponent` | `NGGlass.m` (`NGHeaderView`) |
+| Экран настроек | `PeerInfoSettingsItems.swift`, `PeerInfoScreenDisclosureItem.swift`, `PeerInfoHeaderNode.swift`, `cornersImage(glass:)` | `NGControllers.m` |
 | Панель ввода | `ChatTextInputPanelNode.swift` (стеклянный круг 40 + капсула поля) | `NGChatController.m` |
 | Кривые отправки | `ChatMessageTransitionNode.swift` (`.bezier`), `Spring.swift` | `NGCurves.m` |
 | Метрики сообщений | `ChatMessageItemLayoutConstants.compact`, `ChatMessageDateAndStatusNode` | `NGChatController.m` |
