@@ -1,0 +1,16 @@
+Origin: Nogram
+Label: Nogram
+Suite: stable
+Version: 1.0
+Codename: ios6
+Architectures: iphoneos-arm
+Components: main
+Description: Nogram — Telegram-style client for iOS 6
+MD5Sum:
+ 4dc02c2cff848dacc8ec178f785af953 597 Packages
+ 3c4c15086bb97a96305e2838ec142126 416 Packages.gz
+ b5610f99eac8b29fcb12f13aa8ce6a67 446 Packages.bz2
+SHA256:
+ 8d303937a149d29a1c6dd35d9b4355ae6106dac14a81232309531429ee9bb0cf 597 Packages
+ 816155a31df62e4001416a6a791f7e4ce419fb91ff965607ea2559eb4a837984 416 Packages.gz
+ 0860b4a13c80b238b002edb1b47801001f15430e8f6f2110259c4de25aaece4b 446 Packages.bz2
