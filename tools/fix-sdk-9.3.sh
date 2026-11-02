@@ -7,7 +7,8 @@
 #
 #  1. libSystem.tbd re-exports /usr/lib/system/liblaunch.dylib, but the SDK
 #     ships no stub for it ("file not found: liblaunch.dylib").
-#  2. libsystem_c.tbd does not list memcpy/memmove/memset/memcmp/bzero, which clang emits
+#  2. libsystem_c.tbd does not list memcpy, memcmp, strchr, strcmp and other
+#     string functions that clang emits or C code calls
 #     for struct copies and zeroing. On device they resolve through the
 #     libSystem umbrella whichever sub-library exports them (libsystem_c on
 #     iOS 6, libsystem_platform later), so listing them here is correct.
@@ -38,7 +39,7 @@ TBD
 fi
 
 LIBC="$SDK/usr/lib/system/libsystem_c.tbd"
-for sym in _memcpy _memmove _memset _memcmp _bzero; do
+for sym in _memcpy _memmove _memset _memcmp _bzero _memchr _strchr _strrchr _strcmp _strncmp _strlen _strstr _strcpy _strncpy _strdup; do
     if ! grep -q " $sym," "$LIBC"; then
         sed -i.bak "s/___memcpy_chk,/$sym, ___memcpy_chk,/" "$LIBC" && rm -f "$LIBC.bak"
     fi

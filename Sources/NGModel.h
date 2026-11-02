@@ -37,6 +37,7 @@ typedef NS_ENUM(NSInteger, NGChatKind) {
 @property (nonatomic, strong) NSDate *date;
 @property (nonatomic) NGMessageStatus status;
 @property (nonatomic, strong) NGUser *author;
+@property (nonatomic) int32_t remoteId;   /* server message id, 0 for local */
 + (instancetype)messageWithText:(NSString *)text outgoing:(BOOL)outgoing date:(NSDate *)date;
 @end
 
@@ -55,6 +56,11 @@ typedef NS_ENUM(NSInteger, NGChatKind) {
 @property (nonatomic, copy) NSString *draft;
 @property (nonatomic, copy) NSString *about;
 @property (nonatomic, copy) NSString *link;
+// Set for chats loaded from the server (NGTelegram); nil peerKey = demo chat.
+@property (nonatomic, copy) NSString *peerKey;     /* "u<id>", "c<id>" (basic group), "h<id>" (channel) */
+@property (nonatomic) int64_t peerId;
+@property (nonatomic) int64_t accessHash;
+@property (nonatomic) int32_t readOutboxMaxId;
 - (NGMessage *)lastMessage;
 - (NSString *)initials;
 - (NSString *)statusText;
