@@ -2,10 +2,14 @@
 #import "NGChatController.h"
 #import "NGTheme.h"
 #import "NGViews.h"
+#import "NGOriginal.h"
+#import "NGTabBarController.h"
 #import <QuartzCore/QuartzCore.h>
 
 static void NGPrepareTable(UITableView *table, UIColor *background) {
     table.separatorStyle = UITableViewCellSeparatorStyleNone;
+    table.contentInset = UIEdgeInsetsMake(0, 0, NGTabBarHeight, 0);
+    table.scrollIndicatorInsets = table.contentInset;
     table.backgroundColor = background;
     table.backgroundView = nil;
     table.tableFooterView = [[UIView alloc] initWithFrame:CGRectZero];
@@ -25,7 +29,6 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
 - (instancetype)init {
     if ((self = [super initWithStyle:UITableViewStylePlain])) {
         self.title = @"Чаты";
-        self.tabBarItem = [NGTheme tabItemWithTitle:@"Чаты" icon:NGIconChats];
     }
     return self;
 }
@@ -39,7 +42,7 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
 
     _editItem = [NGTheme barButtonWithTitle:@"Изм." bold:NO target:self action:@selector(toggleEditing)];
     self.navigationItem.leftBarButtonItem = _editItem;
-    self.navigationItem.rightBarButtonItem = [NGTheme barButtonWithIcon:NGIconCompose target:self action:@selector(compose)];
+    self.navigationItem.rightBarButtonItem = [NGTheme barButtonWithAsset:@"nav_compose" target:self action:@selector(compose)];
 }
 
 - (UIView *)searchHeader {
@@ -50,8 +53,8 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
     field.backgroundColor = NGHex(0xe9e9e9);
     field.layer.cornerRadius = 10;
     field.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    UIImageView *icon = [[UIImageView alloc] initWithImage:[NGTheme icon:NGIconSearch size:18 color:NGHex(0x8e8e93)]];
-    icon.frame = CGRectMake(8, 9, 18, 18);
+    UIImageView *icon = [[UIImageView alloc] initWithImage:NGTintedAsset(@"list_search", NGHex(0x8e8e93))];
+    icon.frame = CGRectMake(3, 3, 30, 30);
     [field addSubview:icon];
     UITextField *text = [[UITextField alloc] initWithFrame:CGRectMake(32, 0, w - 16 - 40, 36)];
     text.placeholder = @"Поиск";
@@ -92,7 +95,7 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
     for (NGChat *chat in [NGDemoData shared].chats) {
         if (!chat.muted) unread += chat.unreadCount;
     }
-    self.navigationController.tabBarItem.badgeValue = unread ? [NSString stringWithFormat:@"%ld", (long)unread] : nil;
+    [[self ng_tabBarController] setBadgeValue:(unread ? [NSString stringWithFormat:@"%ld", (long)unread] : nil) atIndex:2];
 }
 
 - (void)searchChanged:(UITextField *)field {
@@ -171,7 +174,6 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
 - (instancetype)init {
     if ((self = [super initWithStyle:UITableViewStylePlain])) {
         self.title = @"Контакты";
-        self.tabBarItem = [NGTheme tabItemWithTitle:@"Контакты" icon:NGIconContacts];
         _contacts = [NGDemoData shared].contacts;
     }
     return self;
@@ -186,7 +188,7 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
         self.navigationItem.leftBarButtonItem = [NGTheme barButtonWithTitle:@"Отмена" bold:NO target:self action:@selector(cancel)];
     } else {
         self.navigationItem.leftBarButtonItem = [NGTheme barButtonWithTitle:@"Сорт." bold:NO target:nil action:NULL];
-        self.navigationItem.rightBarButtonItem = [NGTheme barButtonWithIcon:NGIconPlus target:nil action:NULL];
+        self.navigationItem.rightBarButtonItem = [NGTheme barButtonWithAsset:@"contacts_add" target:nil action:NULL];
     }
 }
 
@@ -195,8 +197,8 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
 }
 
 - (NSArray *)actions {
-    if (self.onSelect) return @[ @[ @(NGIconContacts), @"Создать группу" ], @[ @(NGIconAddContact), @"Новый контакт" ] ];
-    return @[ @[ @(NGIconContacts), @"Найти людей рядом" ], @[ @(NGIconAddContact), @"Пригласить друзей" ] ];
+    if (self.onSelect) return @[ @[ @"contacts_add", @"Создать группу" ], @[ @"contacts_add", @"Новый контакт" ] ];
+    return @[ @[ @"contacts_add", @"Добавить контакт" ], @[ @"contacts_invite", @"Пригласить друзей" ] ];
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
@@ -216,7 +218,7 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
         NGActionCell *cell = [tableView dequeueReusableCellWithIdentifier:@"action"];
         if (!cell) cell = [[NGActionCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"action"];
         NSArray *action = [self actions][indexPath.row];
-        cell.iconView.image = [NGTheme icon:(NGIcon)[action[0] integerValue] size:26 color:[NGTheme accentColor]];
+        cell.iconView.image = NGTintedAsset(action[0], [NGTheme accentColor]);
         cell.titleLabel.text = action[1];
         return cell;
     }
@@ -255,7 +257,6 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
 - (instancetype)init {
     if ((self = [super initWithStyle:UITableViewStylePlain])) {
         self.title = @"Звонки";
-        self.tabBarItem = [NGTheme tabItemWithTitle:@"Звонки" icon:NGIconCalls];
     }
     return self;
 }
@@ -266,7 +267,7 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
     NGPrepareTable(self.tableView, [UIColor whiteColor]);
     self.tableView.rowHeight = 52;
     self.navigationItem.leftBarButtonItem = [NGTheme barButtonWithTitle:@"Изм." bold:NO target:nil action:NULL];
-    self.navigationItem.rightBarButtonItem = [NGTheme barButtonWithIcon:NGIconCalls target:nil action:NULL];
+    self.navigationItem.rightBarButtonItem = [NGTheme barButtonWithAsset:@"settings_phone" target:nil action:NULL];
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
@@ -284,7 +285,7 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
     NSString *kind = call.missed ? @"Пропущенный" : (call.outgoing ? @"Исходящий" : @"Входящий");
     cell.subtitleLabel.text = call.minutes ? [NSString stringWithFormat:@"%@ (%ld мин)", kind, (long)call.minutes] : kind;
     cell.subtitleLabel.textColor = [NGTheme secondaryTextColor];
-    cell.subtitleIcon.image = [NGTheme icon:NGIconCalls size:16 color:NGHex(0xa7a7ad)];
+    cell.subtitleIcon.image = NGTintedAsset(call.outgoing ? @"list_call_out" : @"list_call_in", NGHex(0x8e8e93));
     cell.detailLabel.text = [NGTheme listDateString:call.date];
     cell.hidesSeparator = indexPath.row == (NSInteger)[NGDemoData shared].calls.count - 1;
     [cell setNeedsLayout];
@@ -324,7 +325,7 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
         _titleLabel = [NGTheme labelWithFont:[NGTheme regularFont:17] color:[UIColor blackColor]];
         _detailLabel = [NGTheme labelWithFont:[NGTheme regularFont:17] color:[NGTheme secondaryTextColor]];
         _detailLabel.textAlignment = NSTextAlignmentRight;
-        _chevron = [[UIImageView alloc] initWithImage:[NGTheme disclosureImage]];
+        _chevron = [[UIImageView alloc] initWithImage:NGTintedAsset(@"list_disclosure", NGHex(0xbab9be))];
         _separator = [NGTheme separatorView];
         for (UIView *v in @[ _iconView, _titleLabel, _detailLabel, _chevron, _separator ]) {
             [self.contentView addSubview:v];
@@ -341,8 +342,9 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGFloat w = self.contentView.bounds.size.width, h = self.contentView.bounds.size.height;
-    _iconView.frame = CGRectMake(15, floorf((h - 29) / 2), 29, 29);
-    _chevron.frame = CGRectMake(w - 15 - 8, floorf((h - 13) / 2), 8, 13);
+    _iconView.frame = CGRectMake(15, floorf((h - 30) / 2), 30, 30);
+    CGSize cs = _chevron.image.size;
+    _chevron.frame = CGRectMake(w - 8 - cs.width, floorf((h - cs.height) / 2), cs.width, cs.height);
     CGFloat dw = _detailLabel.text.length ? [NGTheme widthOfText:_detailLabel.text font:_detailLabel.font] : 0;
     _detailLabel.frame = CGRectMake(w - 30 - dw, 0, dw, h);
     _titleLabel.frame = CGRectMake(59, 0, w - 59 - 40 - dw, h);
@@ -359,28 +361,29 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
 - (instancetype)init {
     if ((self = [super initWithStyle:UITableViewStylePlain])) {
         self.title = @"Настройки";
-        self.tabBarItem = [NGTheme tabItemWithTitle:@"Настройки" icon:NGIconSettings];
         // One flat list with spacer rows: plain-style section headers would stick
         // to the top while scrolling, and grouped style on iOS 6 is the old card look.
         NSNull *gap = [NSNull null];
+        // PresentationResourcesSettings: colorRed 0xFF453A, colorGreen 0x34C759,
+        // colorBlue 0x0a84ff, colorLightBlue 0x32ADE6, colorOrange 0xFF9F0A,
+        // colorPurple 0xAF52DE, colorGray 0x8E8E93; tips 0xffcc02.
         _rows = @[
             gap,
-            @[ @(NGIconSaved), NGHex(0x007aff), @"Избранное", @"" ],
-            @[ @(NGIconCalls), NGHex(0x34c759), @"Недавние звонки", @"" ],
-            @[ @(NGIconDevices), NGHex(0xff9500), @"Устройства", @"2" ],
-            @[ @(NGIconFolder), NGHex(0x32ade6), @"Папки с чатами", @"" ],
+            @[ @"settings_saved", NGHex(0x0a84ff), @"Избранное", @"" ],
+            @[ @"settings_phone", NGHex(0x34C759), @"Недавние звонки", @"" ],
+            @[ @"settings_devices", NGHex(0xFF9F0A), @"Устройства", @"2" ],
+            @[ @"settings_folder", NGHex(0x32ADE6), @"Папки с чатами", @"" ],
             gap,
-            @[ @(NGIconBell), NGHex(0xff3b30), @"Уведомления и звуки", @"" ],
-            @[ @(NGIconLock), NGHex(0x8e8e93), @"Конфиденциальность", @"" ],
-            @[ @(NGIconData), NGHex(0x34c759), @"Данные и память", @"" ],
-            @[ @(NGIconBrush), NGHex(0x32ade6), @"Оформление", @"" ],
-            @[ @(NGIconBattery), NGHex(0xff9500), @"Энергосбережение", @"Выкл." ],
-            @[ @(NGIconGlobe), NGHex(0xaf52de), @"Язык", @"Русский" ],
+            @[ @"settings_notifications", NGHex(0xFF453A), @"Уведомления и звуки", @"" ],
+            @[ @"settings_privacy", NGHex(0x8E8E93), @"Конфиденциальность", @"" ],
+            @[ @"settings_data", NGHex(0x34C759), @"Данные и память", @"" ],
+            @[ @"settings_appearance", NGHex(0x32ADE6), @"Оформление", @"" ],
+            @[ @"settings_power", NGHex(0xFF9F0A), @"Энергосбережение", @"Выкл." ],
+            @[ @"settings_language", NGHex(0xAF52DE), @"Язык", @"Русский" ],
             gap,
-            @[ @(NGIconStar), NGHex(0xaf52de), @"Nogram для iOS 6", @"0.1" ],
-            gap,
-            @[ @(NGIconQuestion), NGHex(0xff9500), @"Задать вопрос", @"" ],
-            @[ @(NGIconQuestion), NGHex(0x007aff), @"Вопросы и ответы", @"" ],
+            @[ @"settings_support", NGHex(0xFF9F0A), @"Задать вопрос", @"" ],
+            @[ @"settings_faq", NGHex(0x32ADE6), @"Вопросы о Telegram", @"" ],
+            @[ @"settings_tips", NGHex(0xffcc02), @"Возможности Telegram", @"" ],
             gap,
         ];
     }
@@ -441,7 +444,7 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
     NGSettingsCell *cell = [tableView dequeueReusableCellWithIdentifier:@"item"];
     if (!cell) cell = [[NGSettingsCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"item"];
     NSArray *item = row;
-    cell.iconView.image = [NGTheme settingsIcon:(NGIcon)[item[0] integerValue] background:item[1]];
+    cell.iconView.image = NGSettingsIcon(item[0], @[ item[1] ]);
     cell.titleLabel.text = item[2];
     cell.detailLabel.text = item[3];
     BOOL lastInBlock = indexPath.row + 1 >= (NSInteger)_rows.count || [_rows[indexPath.row + 1] isKindOfClass:[NSNull class]];

@@ -7,16 +7,9 @@
 @property (nonatomic) NSInteger colorIndex;
 @property (nonatomic, copy) NSString *initials;
 @property (nonatomic) BOOL hasIcon;
-@property (nonatomic) NGIcon icon;
 @property (nonatomic) BOOL showsOnline;
 - (void)configureWithChat:(NGChat *)chat;
 - (void)configureWithUser:(NGUser *)user;
-@end
-
-// Read receipts: a clock while sending, one check when sent, two when read.
-@interface NGChecksView : UIView
-@property (nonatomic) NGMessageStatus status;
-@property (nonatomic, strong) UIColor *color;
 @end
 
 // Avatar + title + subtitle + right detail; used by Contacts, Calls and pickers.

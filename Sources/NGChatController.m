@@ -1,83 +1,77 @@
 #import "NGChatController.h"
 #import "NGTheme.h"
 #import "NGViews.h"
+#import "NGOriginal.h"
+#import "NGWallpaper.h"
+#import "NGCurves.h"
 #import <QuartzCore/QuartzCore.h>
 
-#pragma mark - Bubble
+#pragma mark - Layout constants
 
-// A bubble body with an optional tail at its bottom outer corner. The path is
-// built for an outgoing bubble (tail on the right) and mirrored for incoming.
-@interface NGBubbleView : UIView
-@property (nonatomic) BOOL outgoing;
-@property (nonatomic) BOOL tail;
-@property (nonatomic) BOOL mergedTop;
-@property (nonatomic) BOOL mergedBottom;
-@property (nonatomic, strong) UIColor *fill;
-@end
+// ChatMessageItemLayoutConstants.compact and the day-classic message colours
+// (DefaultDayPresentationTheme.swift, `message`).
+static const CGFloat NGBubbleEdgeInset = 3.0f;          // bubble.edgeInset
+static const CGFloat NGBubbleTailInset = 6.0f;          // bubble.contentInsets.left
+static const CGFloat NGCompactInset = 36.0f;            // maximumWidthFill.compactInset
+static const CGFloat NGAvatarInset = 38.0f;             // avatarInset: 34 + 4
+static const CGFloat NGTextInsetLeft = 11.0f;           // text.bubbleInsets
+static const CGFloat NGTextInsetRight = 11.0f;
+static const CGFloat NGStatusHeight = 14.0f;
+static const CGFloat NGBubbleMainRadius = 16.0f;        // PresentationChatBubbleSettings.default
+static const CGFloat NGBubbleAuxiliaryRadius = 8.0f;
 
-static const CGFloat NGTailWidth = 6;
+static CGFloat NGPx(void) { return [NGTheme pixel]; }
+static CGFloat NGTextInsetTop(void) { return 6.0f + NGPx(); }
+static CGFloat NGTextInsetBottom(void) { return 6.0f - NGPx(); }
+static CGFloat NGDefaultSpacing(void) { return 2.0f + NGPx(); }   // bubble.defaultSpacing; mergedSpacing is 0
 
-@implementation NGBubbleView
+static UIFont *NGMessageFont(void) { return [NGTheme regularFont:17.0f]; }
+// ChatMessageDateAndStatusNode: Font.regular(floor(baseDisplaySize * 11 / 17))
+static UIFont *NGDateFont(void) { return [NGTheme regularFont:11.0f]; }
+static UIFont *NGNameFont(void) { return [NGTheme mediumFont:14.0f]; }
 
-- (instancetype)initWithFrame:(CGRect)frame {
-    if ((self = [super initWithFrame:frame])) {
-        self.opaque = NO;
-        self.backgroundColor = [UIColor clearColor];
-        self.contentMode = UIViewContentModeRedraw;
+static UIColor *NGOutgoingFill(void) { return NGHex(0xe1ffc7); }
+static UIColor *NGIncomingFill(void) { return [UIColor whiteColor]; }
+static UIColor *NGOutgoingSecondary(void) { return NGHexA(0x008c09, 0.8f); }
+static UIColor *NGIncomingSecondary(void) { return NGHexA(0x525252, 0.6f); }
+static UIColor *NGOutgoingCheck(void) { return NGHex(0x19c700); }
+
+#pragma mark - Images
+
+static UIImage *NGBubble(BOOL incoming, NGBubbleNeighbors neighbors) {
+    static NSMutableDictionary *cache;
+    if (!cache) cache = [NSMutableDictionary new];
+    NSString *key = [NSString stringWithFormat:@"%d-%ld", incoming, (long)neighbors];
+    UIImage *image = cache[key];
+    if (!image) {
+        image = NGMessageBubbleImage(NGBubbleMainRadius, NGBubbleAuxiliaryRadius, incoming, incoming ? NGIncomingFill() : NGOutgoingFill(), neighbors);
+        cache[key] = image;
     }
-    return self;
+    return image;
 }
 
-- (void)drawRect:(CGRect)rect {
-    CGContextRef ctx = UIGraphicsGetCurrentContext();
-    CGFloat bw = self.bounds.size.width - NGTailWidth, h = self.bounds.size.height;
-    CGFloat R = MIN(16, h / 2), rt = self.mergedTop ? MIN(6, R) : R, rb = self.mergedBottom ? MIN(6, R) : R;
-
-    if (!self.outgoing) {
-        CGContextTranslateCTM(ctx, self.bounds.size.width, 0);
-        CGContextScaleCTM(ctx, -1, 1);
+static UIImage *NGCachedImage(NSString *key, UIImage *(^make)(void)) {
+    static NSMutableDictionary *cache;
+    if (!cache) cache = [NSMutableDictionary new];
+    UIImage *image = cache[key];
+    if (!image) {
+        image = make();
+        if (image) cache[key] = image;
     }
-
-    CGMutablePathRef p = CGPathCreateMutable();
-    CGPathMoveToPoint(p, NULL, R, 0);
-    CGPathAddLineToPoint(p, NULL, bw - rt, 0);
-    CGPathAddArcToPoint(p, NULL, bw, 0, bw, rt, rt);
-    if (self.tail) {
-        CGPathAddLineToPoint(p, NULL, bw, h - 12);
-        CGPathAddCurveToPoint(p, NULL, bw, h - 4, bw + 2.5f, h - 0.8f, bw + NGTailWidth, h - 0.2f);
-        CGPathAddQuadCurveToPoint(p, NULL, bw + 1, h + 0.3f, bw - 8, h);
-    } else {
-        CGPathAddLineToPoint(p, NULL, bw, h - rb);
-        CGPathAddArcToPoint(p, NULL, bw, h, bw - rb, h, rb);
-    }
-    CGPathAddLineToPoint(p, NULL, R, h);
-    CGPathAddArcToPoint(p, NULL, 0, h, 0, h - R, R);
-    CGPathAddLineToPoint(p, NULL, 0, R);
-    CGPathAddArcToPoint(p, NULL, 0, 0, R, 0, R);
-    CGPathCloseSubpath(p);
-
-    CGContextAddPath(ctx, p);
-    CGContextSetFillColorWithColor(ctx, self.fill.CGColor);
-    CGContextFillPath(ctx);
-    CGPathRelease(p);
+    return image;
 }
-
-@end
 
 #pragma mark - Message layout
 
 typedef struct {
-    CGFloat bodyWidth;
-    CGFloat bodyHeight;
-    CGFloat textTop;
-    CGSize textSize;
+    CGSize contentSize;     // the bubble's background frame size
+    CGRect textFrame;       // in background coordinates
+    CGRect statusFrame;
+    CGFloat nameHeight;
 } NGBubbleLayout;
 
-static UIFont *NGMessageFont(void) { return [NGTheme regularFont:17]; }
-static UIFont *NGTimeFont(void) { return [NGTheme regularFont:12]; }
-static UIFont *NGNameFont(void) { return [NGTheme mediumFont:15]; }
-
-// Width of the last line the label will draw, so the time can share it.
+// The width of the last line the label draws, so the date can share it
+// (TextNode's trailingLineWidth).
 static CGFloat NGLastLineWidth(NSString *text, UIFont *font, CGFloat maxWidth) {
     NSString *paragraph = [[text componentsSeparatedByString:@"\n"] lastObject];
     NSString *line = @"";
@@ -95,32 +89,39 @@ static CGFloat NGLastLineWidth(NSString *text, UIFont *font, CGFloat maxWidth) {
 }
 
 static CGFloat NGStatusWidth(NGMessage *m, BOOL checks) {
-    return [NGTheme widthOfText:[NGTheme timeString:m.date] font:NGTimeFont()] + (checks ? 19 : 0);
+    return 5.0f + [NGTheme widthOfText:[NGTheme timeString:m.date] font:NGDateFont()] + (checks ? 13.0f : 0.0f);
 }
 
-static NGBubbleLayout NGLayoutMessage(NGMessage *m, CGFloat maxBodyWidth, BOOL showName, BOOL checks) {
+static NGBubbleLayout NGLayoutMessage(NGMessage *m, CGFloat maximumWidth, BOOL incoming, BOOL showName, BOOL checks) {
     NGBubbleLayout l;
-    CGFloat textMax = maxBodyWidth - 24;
+    CGFloat tail = incoming ? NGBubbleTailInset : 0.0f;
+    CGFloat maxTextWidth = maximumWidth - NGBubbleTailInset - NGTextInsetLeft - NGTextInsetRight;
     UIFont *font = NGMessageFont();
-    l.textSize = [NGTheme sizeOfText:m.text font:font width:textMax];
-    l.textSize.height = MAX(l.textSize.height, ceilf(font.lineHeight));
-    l.textTop = showName ? 26 : 6;
+    CGSize textSize = [NGTheme sizeOfText:m.text font:font width:maxTextWidth];
+    textSize.height = MAX(textSize.height, ceilf(font.lineHeight));
 
-    CGFloat status = NGStatusWidth(m, checks);
-    CGFloat lastLine = NGLastLineWidth(m.text, font, textMax);
-    CGFloat content;
-    if (lastLine + 10 + status <= textMax) {
-        content = MAX(l.textSize.width, lastLine + 10 + status);
-        l.bodyHeight = l.textTop + l.textSize.height + 7;
-    } else {
-        content = MAX(l.textSize.width, status);
-        l.bodyHeight = l.textTop + l.textSize.height + 21;
-    }
+    CGFloat statusWidth = NGStatusWidth(m, checks);
+    CGFloat lastLine = NGLastLineWidth(m.text, font, maxTextWidth);
+    BOOL inlineStatus = lastLine + statusWidth <= maxTextWidth;
+    CGFloat contentWidth = MAX(textSize.width, inlineStatus ? lastLine + statusWidth : statusWidth);
+
+    l.nameHeight = showName ? 20.0f : 0.0f;
     if (showName) {
-        content = MAX(content, MIN(textMax, [NGTheme widthOfText:[m.author displayName] font:NGNameFont()]));
+        contentWidth = MAX(contentWidth, MIN(maxTextWidth, [NGTheme widthOfText:[m.author displayName] font:NGNameFont()]));
     }
-    l.bodyWidth = content + 24;
+    CGFloat textTop = NGTextInsetTop() + l.nameHeight;
+    CGFloat textBottom = textTop + textSize.height + (inlineStatus ? 0.0f : NGStatusHeight);
+    l.textFrame = CGRectMake(tail + NGTextInsetLeft, textTop, textSize.width, textSize.height);
+    l.statusFrame = CGRectMake(tail + NGTextInsetLeft + contentWidth - statusWidth, textBottom - NGStatusHeight, statusWidth, NGStatusHeight);
+    // bubble.minimumSize 40 x 35
+    l.contentSize = CGSizeMake(MAX(40.0f, NGBubbleTailInset + NGTextInsetLeft + contentWidth + NGTextInsetRight),
+                               MAX(35.0f, textBottom + NGTextInsetBottom()));
     return l;
+}
+
+static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
+    // maximumWidthFill.widthFor(width) under compactWidthBoundary: width - compactInset
+    return MAX(1.0f, width - NGCompactInset - (avatarSpace ? NGAvatarInset : 0.0f));
 }
 
 #pragma mark - Message cell
@@ -128,98 +129,148 @@ static NGBubbleLayout NGLayoutMessage(NGMessage *m, CGFloat maxBodyWidth, BOOL s
 @interface NGMessageCell : UITableViewCell
 @property (nonatomic, strong) NGMessage *message;
 @property (nonatomic) BOOL mergedTop, mergedBottom, showName, showAvatar, avatarSpace, showChecks;
+@property (nonatomic, readonly) UIView *bubbleContainer;
 + (CGFloat)heightForMessage:(NGMessage *)m width:(CGFloat)width mergedTop:(BOOL)mt mergedBottom:(BOOL)mb showName:(BOOL)name avatarSpace:(BOOL)avatarSpace checks:(BOOL)checks;
 - (void)refresh;
 @end
 
-static CGFloat NGMaxBodyWidth(CGFloat width, BOOL avatarSpace) {
-    return floorf((width - (avatarSpace ? 44 : 0)) * 0.8f) - NGTailWidth;
-}
-
 @implementation NGMessageCell {
-    NGBubbleView *_bubble;
+    UIImageView *_bubble;
     UILabel *_text;
     UILabel *_name;
-    UILabel *_time;
-    NGChecksView *_checks;
+    UILabel *_date;
+    UIImageView *_checkSent;
+    UIImageView *_checkRead;
+    UIImageView *_clockFrame;
+    UIImageView *_clockMin;
     NGAvatarView *_avatar;
 }
 
 + (CGFloat)heightForMessage:(NGMessage *)m width:(CGFloat)width mergedTop:(BOOL)mt mergedBottom:(BOOL)mb showName:(BOOL)name avatarSpace:(BOOL)avatarSpace checks:(BOOL)checks {
-    NGBubbleLayout l = NGLayoutMessage(m, NGMaxBodyWidth(width, avatarSpace), name, checks);
-    return (mt ? 1 : 4) + l.bodyHeight + (mb ? 1 : 4);
+    NGBubbleLayout l = NGLayoutMessage(m, NGMaximumWidth(width, avatarSpace), !m.outgoing, name, checks);
+    return (mt ? 0.0f : NGDefaultSpacing()) + l.contentSize.height;
 }
 
 - (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
     if ((self = [super initWithStyle:UITableViewCellStyleDefault reuseIdentifier:reuseIdentifier])) {
         self.selectionStyle = UITableViewCellSelectionStyleNone;
         self.backgroundColor = [UIColor clearColor];
-        _bubble = [[NGBubbleView alloc] initWithFrame:CGRectZero];
+        _bubbleContainer = [[UIView alloc] initWithFrame:CGRectZero];
+        _bubble = [[UIImageView alloc] initWithFrame:CGRectZero];
         _text = [NGTheme labelWithFont:NGMessageFont() color:[UIColor blackColor]];
         _text.numberOfLines = 0;
         _text.lineBreakMode = NSLineBreakByWordWrapping;
         _name = [NGTheme labelWithFont:NGNameFont() color:[UIColor blackColor]];
-        _time = [NGTheme labelWithFont:NGTimeFont() color:[UIColor grayColor]];
-        _checks = [[NGChecksView alloc] initWithFrame:CGRectMake(0, 0, 16, 12)];
-        _avatar = [[NGAvatarView alloc] initWithFrame:CGRectMake(0, 0, 36, 36)];
-        for (UIView *v in @[ _avatar, _bubble, _name, _text, _time, _checks ]) {
-            [self.contentView addSubview:v];
+        _date = [NGTheme labelWithFont:NGDateFont() color:[UIColor grayColor]];
+        _checkSent = [[UIImageView alloc] initWithFrame:CGRectZero];
+        _checkRead = [[UIImageView alloc] initWithFrame:CGRectZero];
+        _clockFrame = [[UIImageView alloc] initWithFrame:CGRectZero];
+        _clockMin = [[UIImageView alloc] initWithFrame:CGRectZero];
+        _avatar = [[NGAvatarView alloc] initWithFrame:CGRectMake(0, 0, 34, 34)];
+        [self.contentView addSubview:_avatar];
+        [self.contentView addSubview:_bubbleContainer];
+        for (UIView *v in @[ _bubble, _name, _text, _date, _checkSent, _checkRead, _clockFrame, _clockMin ]) {
+            [_bubbleContainer addSubview:v];
         }
     }
     return self;
 }
 
+- (NGBubbleNeighbors)neighbors {
+    // messageBubbleArguments: .none / .top(side: false) / .bottom / .both
+    if (self.mergedTop && self.mergedBottom) return NGBubbleNeighborsBoth;
+    if (self.mergedBottom) return NGBubbleNeighborsTop;
+    if (self.mergedTop) return NGBubbleNeighborsBottom;
+    return NGBubbleNeighborsNone;
+}
+
 - (void)refresh {
     NGMessage *m = self.message;
-    BOOL out = m.outgoing;
-    _bubble.outgoing = out;
-    _bubble.tail = !self.mergedBottom;
-    _bubble.mergedTop = self.mergedTop;
-    _bubble.mergedBottom = self.mergedBottom;
-    _bubble.fill = out ? NGHex(0xe1ffc7) : [UIColor whiteColor];
-    [_bubble setNeedsDisplay];
+    BOOL incoming = !m.outgoing;
+    _bubble.image = NGBubble(incoming, [self neighbors]);
 
     _text.text = m.text;
     _name.hidden = !self.showName;
     _name.text = [m.author displayName];
     _name.textColor = [NGTheme nameColorAtIndex:m.author.colorIndex];
-    _time.text = [NGTheme timeString:m.date];
-    UIColor *secondary = out ? NGHexA(0x3fa632, 0.85f) : NGHexA(0x525252, 0.6f);
-    _time.textColor = secondary;
-    _checks.hidden = !self.showChecks;
-    _checks.color = secondary;
-    _checks.status = m.status;
+    _date.text = [NGTheme timeString:m.date];
+    _date.textColor = incoming ? NGIncomingSecondary() : NGOutgoingSecondary();
+
+    BOOL checks = self.showChecks;
+    BOOL sending = checks && m.status == NGMessageStatusSending;
+    _clockFrame.hidden = _clockMin.hidden = !sending;
+    _checkSent.hidden = !checks || sending;
+    _checkRead.hidden = !checks || m.status != NGMessageStatusRead;
+    UIColor *checkColor = NGOutgoingCheck();
+    _checkSent.image = NGCachedImage(@"check-full", ^{ return NGCheckImage(NO, checkColor, 11.0f); });
+    _checkRead.image = NGCachedImage(@"check-partial", ^{ return NGCheckImage(YES, checkColor, 11.0f); });
+    UIColor *pending = NGOutgoingSecondary();
+    _clockFrame.image = NGCachedImage(@"clock-frame", ^{ return NGClockFrameImage(pending); });
+    _clockMin.image = NGCachedImage(@"clock-min", ^{ return NGClockMinImage(pending); });
+    [self updateClockAnimation];
+
     _avatar.hidden = !self.showAvatar;
     if (self.showAvatar) [_avatar configureWithUser:m.author];
     _avatar.showsOnline = NO;
     [self setNeedsLayout];
 }
 
+// The pending clock's hands turn: the minute hand once a second, the frame's
+// hand once in six (ChatMessageDateAndStatusNode's clock animations).
+- (void)updateClockAnimation {
+    if (_clockMin.hidden) {
+        [_clockMin.layer removeAllAnimations];
+        [_clockFrame.layer removeAllAnimations];
+        return;
+    }
+    if ([_clockMin.layer animationForKey:@"clock"]) return;
+    CABasicAnimation *minute = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
+    minute.fromValue = @0;
+    minute.toValue = @(M_PI * 2.0);
+    minute.duration = 1.0;
+    minute.repeatCount = HUGE_VALF;
+    [_clockMin.layer addAnimation:minute forKey:@"clock"];
+    CABasicAnimation *hour = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
+    hour.fromValue = @0;
+    hour.toValue = @(M_PI * 2.0);
+    hour.duration = 6.0;
+    hour.repeatCount = HUGE_VALF;
+    [_clockFrame.layer addAnimation:hour forKey:@"clock"];
+}
+
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGFloat w = self.contentView.bounds.size.width, h = self.contentView.bounds.size.height;
     NGMessage *m = self.message;
-    NGBubbleLayout l = NGLayoutMessage(m, NGMaxBodyWidth(w, self.avatarSpace), self.showName, self.showChecks);
+    BOOL incoming = !m.outgoing;
+    NGBubbleLayout l = NGLayoutMessage(m, NGMaximumWidth(w, self.avatarSpace), incoming, self.showName, self.showChecks);
 
-    CGFloat top = self.mergedTop ? 1 : 4;
-    CGFloat viewWidth = l.bodyWidth + NGTailWidth;
-    CGFloat bubbleX = m.outgoing ? w - 4 - viewWidth : (self.avatarSpace ? 44 : 2);
-    _bubble.frame = CGRectMake(bubbleX, top, viewWidth, l.bodyHeight);
-    CGFloat bodyX = m.outgoing ? bubbleX : bubbleX + NGTailWidth;
+    CGFloat top = self.mergedTop ? 0.0f : NGDefaultSpacing();
+    CGFloat x = incoming ? NGBubbleEdgeInset + (self.avatarSpace ? NGAvatarInset : 0.0f) : w - NGBubbleEdgeInset - l.contentSize.width;
+    _bubbleContainer.transform = CGAffineTransformIdentity;
+    _bubbleContainer.frame = CGRectMake(x, top, l.contentSize.width, l.contentSize.height);
+    // ChatMessageBackground: the image overhangs the background frame by 1pt.
+    _bubble.frame = CGRectInset(_bubbleContainer.bounds, -1.0f, -1.0f);
 
-    _name.frame = CGRectMake(bodyX + 12, top + 5, l.bodyWidth - 24, 19);
-    _text.frame = CGRectMake(bodyX + 12, top + l.textTop, l.textSize.width, l.textSize.height);
+    _name.frame = CGRectMake(l.textFrame.origin.x, NGTextInsetTop(), l.contentSize.width - l.textFrame.origin.x - NGTextInsetRight, 18.0f);
+    _text.frame = l.textFrame;
 
-    CGFloat statusRight = bodyX + l.bodyWidth - 10;
-    CGFloat statusY = top + l.bodyHeight - 20;
-    if (self.showChecks) {
-        _checks.frame = CGRectMake(statusRight - 16, statusY + 2, 16, 12);
-        statusRight -= 19;
-    }
-    CGFloat tw = [NGTheme widthOfText:_time.text font:_time.font];
-    _time.frame = CGRectMake(statusRight - tw, statusY, tw, 15);
+    CGRect s = l.statusFrame;
+    CGFloat dateWidth = [NGTheme widthOfText:_date.text font:_date.font];
+    _date.frame = CGRectMake(s.origin.x + 5.0f, s.origin.y, dateWidth, NGStatusHeight);
+    CGFloat statusLeft = s.origin.x + 5.0f;
+    CGFloat checkOffset = 6.0f;   // floor(baseDisplaySize * 6 / 17)
+    CGSize checkSize = _checkSent.image.size;
+    CGFloat checkX = statusLeft + dateWidth + 5.0f + 13.0f - checkSize.width;
+    _checkRead.frame = CGRectMake(checkX, s.origin.y + 3.0f, checkSize.width, checkSize.height);
+    _checkSent.frame = CGRectMake(checkX - checkOffset, s.origin.y + 3.0f, checkSize.width, checkSize.height);
+    CGPoint clock = CGPointMake(statusLeft + dateWidth + 8.5f, s.origin.y + 7.5f);
+    _clockFrame.bounds = CGRectMake(0, 0, 11, 11);
+    _clockFrame.center = clock;
+    _clockMin.bounds = CGRectMake(0, 0, 11, 11);
+    _clockMin.center = clock;
 
-    _avatar.frame = CGRectMake(5, h - (self.mergedBottom ? 1 : 4) - 36, 36, 36);
+    _avatar.frame = CGRectMake(NGBubbleEdgeInset + 1.0f, h - 34.0f, 34.0f, 34.0f);
 }
 
 @end
@@ -239,9 +290,9 @@ static CGFloat NGMaxBodyWidth(CGFloat width, BOOL avatarSpace) {
         self.selectionStyle = UITableViewCellSelectionStyleNone;
         self.backgroundColor = [UIColor clearColor];
         _pill = [[UIView alloc] initWithFrame:CGRectZero];
-        _pill.backgroundColor = NGHexA(0x000000, 0.2f);
-        _pill.layer.cornerRadius = 11;
-        _label = [NGTheme labelWithFont:[NGTheme mediumFont:13] color:[UIColor whiteColor]];
+        _pill.backgroundColor = NGHexA(0x000000, 0.2f);   // defaultServiceBackgroundColor
+        _pill.layer.cornerRadius = 10.0f;
+        _label = [NGTheme labelWithFont:[NGTheme mediumFont:13.0f] color:[UIColor whiteColor]];
         _label.textAlignment = NSTextAlignmentCenter;
         [self.contentView addSubview:_pill];
         [self.contentView addSubview:_label];
@@ -252,8 +303,8 @@ static CGFloat NGMaxBodyWidth(CGFloat width, BOOL avatarSpace) {
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGFloat w = self.contentView.bounds.size.width;
-    CGFloat tw = [NGTheme widthOfText:_label.text font:_label.font] + 18;
-    _pill.frame = CGRectMake(floorf((w - tw) / 2), 8, tw, 22);
+    CGFloat tw = [NGTheme widthOfText:_label.text font:_label.font] + 16.0f;
+    _pill.frame = CGRectMake(floorf((w - tw) / 2.0f), 7.0f, tw, 20.0f);
     _label.frame = _pill.frame;
 }
 
@@ -267,6 +318,7 @@ static CGFloat NGMaxBodyWidth(CGFloat width, BOOL avatarSpace) {
 @implementation NGChatController {
     NGChat *_chat;
     NSMutableArray *_rows;
+    NGWallpaperView *_wallpaper;
     UITableView *_table;
     UIView *_panel;
     UIView *_panelLine;
@@ -275,10 +327,13 @@ static CGFloat NGMaxBodyWidth(CGFloat width, BOOL avatarSpace) {
     UILabel *_placeholder;
     UIButton *_attach;
     UIButton *_send;
+    UIImageView *_stickers;
     UIButton *_channelButton;
     UILabel *_titleLabel;
     UILabel *_subtitleLabel;
     CGFloat _keyboardOverlap;
+    NGMessage *_animatingMessage;
+    CGRect _sourceFieldFrame;
 }
 
 - (instancetype)initWithChat:(NGChat *)chat {
@@ -296,13 +351,9 @@ static CGFloat NGMaxBodyWidth(CGFloat width, BOOL avatarSpace) {
     [NGTheme disableExtendedLayoutFor:self];
     self.view.backgroundColor = [UIColor whiteColor];
 
-    CGSize screen = [UIScreen mainScreen].bounds.size;
-    UIImageView *wallpaper = [[UIImageView alloc] initWithFrame:self.view.bounds];
-    wallpaper.image = [NGTheme wallpaperImageWithSize:screen];
-    wallpaper.contentMode = UIViewContentModeScaleAspectFill;
-    wallpaper.clipsToBounds = YES;
-    wallpaper.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    [self.view addSubview:wallpaper];
+    _wallpaper = [[NGWallpaperView alloc] initWithFrame:self.view.bounds];
+    _wallpaper.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [self.view addSubview:_wallpaper];
 
     _table = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStylePlain];
     _table.backgroundColor = [UIColor clearColor];
@@ -334,11 +385,11 @@ static CGFloat NGMaxBodyWidth(CGFloat width, BOOL avatarSpace) {
     self.navigationItem.leftBarButtonItem = [NGTheme backButtonWithTitle:backTitle target:self action:@selector(back)];
 
     UIView *titleView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 180, 44)];
-    _titleLabel = [NGTheme labelWithFont:[NGTheme mediumFont:16] color:[UIColor blackColor]];
+    _titleLabel = [NGTheme labelWithFont:[NGTheme semiboldFont:17.0f] color:[UIColor blackColor]];
     _titleLabel.textAlignment = NSTextAlignmentCenter;
     _titleLabel.text = _chat.title;
     _titleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    _subtitleLabel = [NGTheme labelWithFont:[NGTheme regularFont:13] color:[NGTheme secondaryTextColor]];
+    _subtitleLabel = [NGTheme labelWithFont:[NGTheme regularFont:13.0f] color:[NGTheme secondaryTextColor]];
     _subtitleLabel.textAlignment = NSTextAlignmentCenter;
     _subtitleLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [titleView addSubview:_titleLabel];
@@ -353,10 +404,10 @@ static CGFloat NGMaxBodyWidth(CGFloat width, BOOL avatarSpace) {
     self.navigationItem.titleView = titleView;
     [self updateSubtitle];
 
-    NGAvatarView *avatar = [[NGAvatarView alloc] initWithFrame:CGRectMake(0, 0, 36, 36)];
+    NGAvatarView *avatar = [[NGAvatarView alloc] initWithFrame:CGRectMake(0, 0, 37, 37)];
     [avatar configureWithChat:_chat];
     avatar.showsOnline = NO;
-    UIView *holder = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 36, 36)];
+    UIView *holder = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 37, 37)];
     [holder addSubview:avatar];
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithCustomView:holder];
 }
@@ -367,10 +418,12 @@ static CGFloat NGMaxBodyWidth(CGFloat width, BOOL avatarSpace) {
     _subtitleLabel.textColor = accent ? [NGTheme accentColor] : [NGTheme secondaryTextColor];
 }
 
+// ChatTextInputPanelNode with the day theme's inputPanel colours.
 - (void)buildPanel {
+    UIColor *control = NGHex(0x858e99);   // inputPanel.panelControlColor
     _panel = [[UIView alloc] initWithFrame:CGRectZero];
     _panel.backgroundColor = NGHex(0xf7f7f7);
-    _panelLine = [NGTheme separatorView];
+    _panelLine = [[UIView alloc] initWithFrame:CGRectZero];
     _panelLine.backgroundColor = NGHex(0xb2b2b2);
     [_panel addSubview:_panelLine];
     [self.view addSubview:_panel];
@@ -387,28 +440,31 @@ static CGFloat NGMaxBodyWidth(CGFloat width, BOOL avatarSpace) {
     }
 
     _attach = [UIButton buttonWithType:UIButtonTypeCustom];
-    [_attach setImage:[NGTheme icon:NGIconAttach size:28 color:NGHex(0x858e99)] forState:UIControlStateNormal];
+    [_attach setImage:NGTintedAsset(@"input_attach", control) forState:UIControlStateNormal];
     [_panel addSubview:_attach];
 
     _field = [[UIView alloc] initWithFrame:CGRectZero];
     _field.backgroundColor = [UIColor whiteColor];
-    _field.layer.cornerRadius = 17;
-    _field.layer.borderWidth = [NGTheme pixel];
+    _field.layer.cornerRadius = 16.5f;
+    _field.layer.borderWidth = NGPx();
     _field.layer.borderColor = NGHex(0xd9dcdf).CGColor;
     _field.clipsToBounds = YES;
     [_panel addSubview:_field];
 
     _textView = [[UITextView alloc] initWithFrame:CGRectZero];
-    _textView.font = [NGTheme regularFont:16];
+    _textView.font = [NGTheme regularFont:17.0f];
     _textView.backgroundColor = [UIColor clearColor];
     _textView.delegate = self;
     _textView.scrollEnabled = NO;
     _textView.scrollsToTop = NO;
     [_field addSubview:_textView];
 
-    _placeholder = [NGTheme labelWithFont:[NGTheme regularFont:16] color:NGHex(0x8e8e93)];
+    _placeholder = [NGTheme labelWithFont:[NGTheme regularFont:17.0f] color:NGHex(0xbebec0)];
     _placeholder.text = @"Сообщение";
     [_field addSubview:_placeholder];
+
+    _stickers = [[UIImageView alloc] initWithImage:NGTintedAsset(@"input_stickers", control)];
+    [_field addSubview:_stickers];
 
     _send = [UIButton buttonWithType:UIButtonTypeCustom];
     [_send addTarget:self action:@selector(sendTapped) forControlEvents:UIControlEventTouchUpInside];
@@ -427,40 +483,58 @@ static CGFloat NGMaxBodyWidth(CGFloat width, BOOL avatarSpace) {
 
 - (void)updateSendButton {
     BOOL hasText = [_textView.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].length > 0;
-    UIImage *image = hasText ? [NGTheme sendButtonImage] : [NGTheme icon:NGIconMic size:28 color:NGHex(0x858e99)];
+    UIImage *image;
+    if (hasText) {
+        // The send button: SendIcon on an accent circle.
+        image = NGCachedImage(@"send-button", ^{
+            UIImage *icon = [UIImage imageNamed:@"input_send"];
+            CGFloat d = 33.0f;
+            UIGraphicsBeginImageContextWithOptions(CGSizeMake(d, d), NO, 0);
+            [[NGTheme accentColor] setFill];
+            [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(0, 0, d, d)] fill];
+            [icon drawInRect:CGRectMake(floorf((d - icon.size.width) / 2.0f), floorf((d - icon.size.height) / 2.0f), icon.size.width, icon.size.height)];
+            UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
+            UIGraphicsEndImageContext();
+            return result;
+        });
+    } else {
+        image = NGTintedAsset(@"input_mic", NGHex(0x858e99));
+    }
     [_send setImage:image forState:UIControlStateNormal];
     _placeholder.hidden = _textView.text.length > 0;
+    _stickers.hidden = hasText;
 }
 
 - (CGFloat)fieldHeight {
-    if (!_textView) return 34;
+    if (!_textView) return 33.0f;
     CGFloat height;
     if ([_textView respondsToSelector:@selector(textContainer)]) {
         height = [_textView sizeThatFits:CGSizeMake(_textView.bounds.size.width, CGFLOAT_MAX)].height;
     } else {
         height = _textView.contentSize.height;
     }
-    return MIN(MAX(ceilf(height), 34), 104);
+    return MIN(MAX(ceilf(height) - 3.0f, 33.0f), 104.0f);
 }
 
 - (void)layoutViews {
     CGFloat w = self.view.bounds.size.width, h = self.view.bounds.size.height;
     CGFloat fieldH = [self fieldHeight];
-    CGFloat panelH = [self isChannel] ? 45 : fieldH + 11;
+    CGFloat panelH = [self isChannel] ? 45.0f : fieldH + 12.0f;
     _panel.frame = CGRectMake(0, h - _keyboardOverlap - panelH, w, panelH);
-    _panelLine.frame = CGRectMake(0, 0, w, [NGTheme pixel]);
+    _panelLine.frame = CGRectMake(0, 0, w, NGPx());
     _table.frame = CGRectMake(0, 0, w, _panel.frame.origin.y);
 
     if ([self isChannel]) {
         _channelButton.frame = _panel.bounds;
         return;
     }
-    _attach.frame = CGRectMake(0, panelH - 45, 44, 45);
-    _send.frame = CGRectMake(w - 44, panelH - 45, 44, 45);
-    _field.frame = CGRectMake(44, 5, w - 88, fieldH);
-    _textView.frame = CGRectMake(4, 0, w - 88 - 8, fieldH);
-    _textView.scrollEnabled = fieldH >= 104;
-    _placeholder.frame = CGRectMake(12, floorf((34 - 20) / 2), 200, 20);
+    _attach.frame = CGRectMake(2.0f, panelH - 45.0f, 40.0f, 45.0f);
+    _send.frame = CGRectMake(w - 44.0f, panelH - 45.0f, 44.0f, 45.0f);
+    _field.frame = CGRectMake(44.0f, 6.0f, w - 44.0f - 46.0f, fieldH);
+    _textView.frame = CGRectMake(4.0f, -2.0f, _field.bounds.size.width - 8.0f - 28.0f, fieldH + 4.0f);
+    _textView.scrollEnabled = fieldH >= 104.0f;
+    _placeholder.frame = CGRectMake(12.0f, floorf((33.0f - 21.0f) / 2.0f), 200.0f, 21.0f);
+    _stickers.frame = CGRectMake(_field.bounds.size.width - 30.0f, fieldH - 29.0f, 24.0f, 24.0f);
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -536,21 +610,21 @@ static BOOL NGGroups(NGMessage *a, NGMessage *b) {
     return _chat.kind == NGChatKindGroup && !m.outgoing;
 }
 
+- (BOOL)showsChecksFor:(NGMessage *)m {
+    return m.outgoing && _chat.kind != NGChatKindSaved && _chat.kind != NGChatKindChannel;
+}
+
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     return _rows.count;
 }
 
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
     NGMessage *m = [self messageAt:indexPath.row];
-    if (!m) return 38;
+    if (!m) return 34.0f;   // timestampHeaderHeight
     BOOL mt = NGGroups(m, [self messageAt:indexPath.row - 1]);
     BOOL mb = NGGroups(m, [self messageAt:indexPath.row + 1]);
     BOOL group = [self isGroupIncoming:m];
     return [NGMessageCell heightForMessage:m width:tableView.bounds.size.width mergedTop:mt mergedBottom:mb showName:(group && !mt) avatarSpace:group checks:[self showsChecksFor:m]];
-}
-
-- (BOOL)showsChecksFor:(NGMessage *)m {
-    return m.outgoing && _chat.kind != NGChatKindSaved && _chat.kind != NGChatKindChannel;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
@@ -578,6 +652,11 @@ static BOOL NGGroups(NGMessage *a, NGMessage *b) {
 
 - (void)tableView:(UITableView *)tableView willDisplayCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)indexPath {
     cell.backgroundColor = [UIColor clearColor];
+    if (_animatingMessage && [cell isKindOfClass:[NGMessageCell class]] && ((NGMessageCell *)cell).message == _animatingMessage) {
+        _animatingMessage = nil;
+        [cell layoutIfNeeded];
+        [self animateSentBubbleInCell:(NGMessageCell *)cell];
+    }
 }
 
 #pragma mark - Input
@@ -593,32 +672,69 @@ static BOOL NGGroups(NGMessage *a, NGMessage *b) {
 - (void)sendTapped {
     NSString *text = [_textView.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (text.length == 0) return;
+    _sourceFieldFrame = [self.view convertRect:_field.frame fromView:_panel];
     _textView.text = @"";
     [self textViewDidChange:_textView];
-    [self appendMessage:[NGMessage messageWithText:text outgoing:YES date:[NSDate date]]];
-    NGMessage *sent = [_chat lastMessage];
-    sent.status = NGMessageStatusSending;
-    _chat.draft = nil;
 
+    NGMessage *sent = [NGMessage messageWithText:text outgoing:YES date:[NSDate date]];
+    sent.status = _chat.kind == NGChatKindSaved ? NGMessageStatusRead : NGMessageStatusSending;
+    _chat.draft = nil;
     NSMutableArray *chats = [NGDemoData shared].chats;
     if (![chats containsObject:_chat]) [chats addObject:_chat];
 
-    if (_chat.kind == NGChatKindSaved) {
-        sent.status = NGMessageStatusRead;
-        return;
-    }
-    [self simulateDeliveryOf:sent];
+    _animatingMessage = sent;
+    [self appendMessage:sent animated:YES];
+    // ChatControllerNode: the send transition also steps the wallpaper.
+    [_wallpaper animateEventWithDuration:NGSendTransitionDuration];
+
+    if (_chat.kind != NGChatKindSaved) [self simulateDeliveryOf:sent];
 }
 
-- (void)appendMessage:(NGMessage *)message {
+- (void)appendMessage:(NGMessage *)message animated:(BOOL)animated {
     [_chat.messages addObject:message];
     [self buildRows];
     [_table reloadData];
-    [self scrollToBottomAnimated:YES];
+    if (!animated) {
+        [self scrollToBottomAnimated:YES];
+        return;
+    }
+    // The list scrolls with the bubble's vertical curve (verticalListCurve).
+    CGFloat bottom = MAX(-_table.contentInset.top, _table.contentSize.height + _table.contentInset.bottom - _table.bounds.size.height);
+    [CATransaction begin];
+    [CATransaction setAnimationTimingFunction:NGCurveTimingFunction(NGCurveSendVertical)];
+    [UIView animateWithDuration:NGSendTransitionDuration animations:^{
+        self->_table.contentOffset = CGPointMake(0, bottom);
+    }];
+    [CATransaction commit];
+}
+
+// ChatMessageTransitionNode, text case: the bubble starts where the input
+// field is and moves into place on separate horizontal and vertical curves.
+- (void)animateSentBubbleInCell:(NGMessageCell *)cell {
+    UIView *bubble = cell.bubbleContainer;
+    CGRect target = [self.view convertRect:bubble.bounds fromView:bubble];
+    CGFloat dx = CGRectGetMinX(_sourceFieldFrame) - CGRectGetMinX(target);
+    CGFloat dy = CGRectGetMaxY(_sourceFieldFrame) - CGRectGetMaxY(target);
+    if (dx > 0) dx = MIN(dx, CGRectGetMaxX(_sourceFieldFrame) - CGRectGetMaxX(target));
+
+    CABasicAnimation *x = [CABasicAnimation animationWithKeyPath:@"transform.translation.x"];
+    x.fromValue = @(dx);
+    x.toValue = @0;
+    x.duration = NGSendTransitionDuration;
+    x.timingFunction = NGCurveTimingFunction(NGCurveSendHorizontal);
+    CABasicAnimation *y = [CABasicAnimation animationWithKeyPath:@"transform.translation.y"];
+    y.fromValue = @(dy);
+    y.toValue = @0;
+    y.duration = NGSendTransitionDuration;
+    y.timingFunction = NGCurveTimingFunction(NGCurveSendVertical);
+    [bubble.layer addAnimation:x forKey:@"sendX"];
+    [bubble.layer addAnimation:y forKey:@"sendY"];
 }
 
 - (void)refreshVisible {
-    [_table reloadData];
+    for (UITableViewCell *cell in _table.visibleCells) {
+        if ([cell isKindOfClass:[NGMessageCell class]]) [(NGMessageCell *)cell refresh];
+    }
 }
 
 // Local stand-in for the network: sent, read, typing, then an answer.
@@ -641,7 +757,7 @@ static BOOL NGGroups(NGMessage *a, NGMessage *b) {
         reply.author = chat.kind == NGChatKindGroup ? chat.members[arc4random_uniform((uint32_t)chat.members.count)] : chat.user;
         NGChatController *strongSelf = weakSelf;
         if (strongSelf && strongSelf.isViewLoaded && strongSelf.view.window) {
-            [strongSelf appendMessage:reply];
+            [strongSelf appendMessage:reply animated:NO];
             [strongSelf updateSubtitle];
         } else {
             [chat.messages addObject:reply];
