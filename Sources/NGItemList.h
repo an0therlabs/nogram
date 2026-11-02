@@ -16,7 +16,9 @@ typedef NS_ENUM(NSInteger, NGItemKind) {
     NGItemKindDestructive,  // destructive title
     NGItemKindInfo,         // title over a secondary subtitle, no arrow
     NGItemKindSlider,
-    NGItemKindCustom,       // a view supplied by the screen
+    NGItemKindCustom,       // a view supplied by the screen, inside a card
+    NGItemKindLabeled,      // PeerInfoScreenLabeledValueItem: label (14) over a value (17)
+    NGItemKindFullWidth,    // a view across the whole width, no card (the media panes)
 };
 
 @interface NGItem : NSObject
@@ -30,6 +32,7 @@ typedef NS_ENUM(NSInteger, NGItemKind) {
 @property (nonatomic) float value;                 // slider
 @property (nonatomic, copy) NSString *group;       // checks sharing a group are exclusive
 @property (nonatomic, strong) UIView *customView;
+@property (nonatomic) BOOL accent;                 // labeled value in the accent colour (phone, username, link)
 @property (nonatomic, copy) UIViewController *(^destination)(void);
 @property (nonatomic, copy) void (^action)(NGItem *item);
 
@@ -44,11 +47,16 @@ typedef NS_ENUM(NSInteger, NGItemKind) {
 + (instancetype)info:(NSString *)title subtitle:(NSString *)subtitle;
 + (instancetype)slider:(float)value;
 + (instancetype)custom:(UIView *)view;
++ (instancetype)labeled:(NSString *)label value:(NSString *)value accent:(BOOL)accent;
++ (instancetype)fullWidth:(UIView *)view;
 @end
 
 @interface NGItemListController : NGListController
 - (instancetype)initWithTitle:(NSString *)title items:(NSArray *)items;
 @property (nonatomic, copy) NSArray *items;
+// A view at the top of the list (the profile header); the bar floats over it.
+@property (nonatomic, strong) UIView *headerView;
+- (void)reloadHeights;
 @end
 
 // The blocks colour with a card's 26pt corners cut out (cornersImage(glass: true)).

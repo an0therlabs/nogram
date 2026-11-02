@@ -5,6 +5,7 @@
 #import "NGWallpaper.h"
 #import "NGCurves.h"
 #import "NGGlass.h"
+#import "NGProfile.h"
 #import <QuartzCore/QuartzCore.h>
 
 #pragma mark - Layout constants
@@ -406,13 +407,25 @@ static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
         _subtitleLabel.frame = CGRectMake(12, 24, pillWidth - 24, 15);
     }
     _header.titleView = titlePill;
+    // Tapping the title or the avatar opens the peer's profile (PeerInfoScreen).
+    UITapGestureRecognizer *titleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(openProfile)];
+    [titlePill addGestureRecognizer:titleTap];
 
-    NGAvatarView *avatar = [[NGAvatarView alloc] initWithFrame:CGRectMake(0, 0, 44, 44)];
+    UIControl *avatarButton = [[UIControl alloc] initWithFrame:CGRectMake(0, 0, 44, 44)];
+    NGAvatarView *avatar = [[NGAvatarView alloc] initWithFrame:avatarButton.bounds];
     [avatar configureWithChat:_chat];
     avatar.showsOnline = NO;
-    _header.rightButtons = @[ avatar ];
+    [avatarButton addSubview:avatar];
+    [avatarButton addTarget:self action:@selector(openProfile) forControlEvents:UIControlEventTouchUpInside];
+    _header.rightButtons = @[ avatarButton ];
     [self.view addSubview:_header];
     [self updateSubtitle];
+}
+
+- (void)openProfile {
+    if (_chat.kind == NGChatKindSaved) return;
+    [self.view endEditing:YES];
+    [self.navigationController pushViewController:NGPeerInfoScreen(_chat, YES) animated:YES];
 }
 
 - (void)updateSubtitle {

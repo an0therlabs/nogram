@@ -128,6 +128,19 @@ static NGMessage *NGIn(NSString *text, double minutesAgo, NGUser *author) {
     for (NGUser *u in @[ dima, mom, katya, oleg, sergey, anna, nikita, lena ]) {
         u.phone = @"+7 900 000-00-00";
     }
+    dima.phone = @"+7 916 555-12-34";
+    dima.username = @"dima_garage";
+    dima.bio = @"Паяю, прошиваю, джейлбрейкаю. iPhone 4S навсегда.";
+    dima.birthday = @"14 марта";
+    dima.musicTitle = @"Группа крови";
+    dima.musicArtist = @"Кино";
+    oleg.username = @"oleg_jb";
+    oleg.bio = @"Твики для iOS 6 с 2013 года";
+    oleg.musicTitle = @"Smells Like Teen Spirit";
+    oleg.musicArtist = @"Nirvana";
+    katya.username = @"katya_s";
+    katya.birthday = @"2 ноября";
+    sergey.bio = @"Работа: 9:00–18:00";
     _contacts = [@[ dima, mom, katya, oleg, sergey, anna, nikita, lena ] sortedArrayUsingComparator:^NSComparisonResult(NGUser *a, NGUser *b) {
         if (a.online != b.online) return a.online ? NSOrderedAscending : NSOrderedDescending;
         return [[a displayName] compare:[b displayName]];
@@ -167,6 +180,8 @@ static NGMessage *NGIn(NSString *text, double minutesAgo, NGUser *author) {
     garage.subtitle = @"4 участника, 2 в сети";
     garage.colorIndex = 1;
     garage.members = @[ dima, oleg, katya ];
+    garage.about = @"Чат для тех, кто до сих пор держит iPhone на iOS 6. Делимся твиками, прошивками и болью.";
+    garage.link = @"t.me/ios6garage";
     garage.unreadCount = 5;
     [garage.messages addObjectsFromArray:@[
         NGIn(@"Кто-нибудь помнит, как Cydia ставить на 6.1.6?", 60 * 5, oleg),
@@ -195,6 +210,8 @@ static NGMessage *NGIn(NSString *text, double minutesAgo, NGUser *author) {
     channel.colorIndex = 2;
     channel.muted = YES;
     channel.unreadCount = 23;
+    channel.about = @"Новости джейлбрейка, твиков и старых прошивок. Без рекламы.";
+    channel.link = @"t.me/jailbreak_news";
     [channel.messages addObjectsFromArray:@[
         NGIn(@"Вышел p0sixspwn для iOS 6.1.3–6.1.6. Untethered, поддерживаются все устройства на armv7.", 60 * 30, nil),
         NGIn(@"Обновился Theos: добавлена поддержка новых тулчейнов на Linux.", 60 * 8, nil),

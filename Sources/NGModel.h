@@ -21,6 +21,10 @@ typedef NS_ENUM(NSInteger, NGChatKind) {
 @property (nonatomic, copy) NSString *lastSeen;
 @property (nonatomic) NSInteger colorIndex;
 @property (nonatomic) BOOL online;
+@property (nonatomic, copy) NSString *bio;
+@property (nonatomic, copy) NSString *birthday;
+@property (nonatomic, copy) NSString *musicTitle;    // the profile's saved music (peerInfoProfileMusic)
+@property (nonatomic, copy) NSString *musicArtist;
 + (instancetype)userWithFirst:(NSString *)first last:(NSString *)last color:(NSInteger)color online:(BOOL)online lastSeen:(NSString *)lastSeen;
 - (NSString *)displayName;
 - (NSString *)initials;
@@ -49,6 +53,8 @@ typedef NS_ENUM(NSInteger, NGChatKind) {
 @property (nonatomic) BOOL pinned;
 @property (nonatomic) BOOL typing;
 @property (nonatomic, copy) NSString *draft;
+@property (nonatomic, copy) NSString *about;
+@property (nonatomic, copy) NSString *link;
 - (NGMessage *)lastMessage;
 - (NSString *)initials;
 - (NSString *)statusText;

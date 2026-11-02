@@ -1,6 +1,6 @@
 Package: com.nogram.legacy
 Name: Nogram
-Version: 0.5.0
+Version: 0.6.0
 Architecture: iphoneos-arm
 Description: Telegram-style demo client for iOS 6 (UI demo with local data).
 Maintainer: nogram
