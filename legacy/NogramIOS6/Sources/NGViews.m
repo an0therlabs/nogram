@@ -1,4 +1,5 @@
 #import "NGViews.h"
+#import "NGOriginal.h"
 
 #pragma mark - Avatar
 
@@ -18,7 +19,6 @@
     self.colorIndex = chat.colorIndex;
     self.initials = [chat initials];
     self.hasIcon = chat.kind == NGChatKindSaved;
-    self.icon = NGIconSaved;
     self.showsOnline = chat.kind == NGChatKindPrivate && chat.user.online;
     [self setNeedsDisplay];
 }
@@ -38,7 +38,8 @@
 
     CGContextSaveGState(ctx);
     [[UIBezierPath bezierPathWithOvalInRect:circle] addClip];
-    NSArray *colors = [NGTheme avatarColorsAtIndex:self.colorIndex];
+    // AvatarNode.savedMessagesColors for the Saved Messages icon, gradientColors otherwise.
+    NSArray *colors = self.hasIcon ? @[ NGHex(0x2a9ef1), NGHex(0x72d5fd) ] : [NGTheme avatarColorsAtIndex:self.colorIndex];
     UIColor *bottom = colors[0], *top = colors[1];
     NSArray *stops = @[ (__bridge id)top.CGColor, (__bridge id)bottom.CGColor ];
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
@@ -49,75 +50,28 @@
     CGContextRestoreGState(ctx);
 
     if (self.hasIcon) {
-        CGFloat s = floorf(d * 0.5f);
-        [[NGTheme icon:self.icon size:s color:[UIColor whiteColor]] drawInRect:CGRectMake(floorf((d - s) / 2), floorf((d - s) / 2), s, s)];
+        // AvatarNode .savedMessagesIcon: the asset scaled by width / 60, tinted white.
+        UIImage *icon = NGTintedAsset(@"avatar_saved", [UIColor whiteColor]);
+        CGFloat factor = d / 60.0f;
+        CGSize s = CGSizeMake(icon.size.width * factor, icon.size.height * factor);
+        [icon drawInRect:CGRectMake((d - s.width) / 2.0f, (d - s.height) / 2.0f, s.width, s.height)];
     } else if (self.initials.length) {
-        UIFont *font = [NGTheme mediumFont:floorf(d * 0.4f)];
+        // avatarPlaceholderFont(size: floor(diameter * 26 / 60)): rounded bold, plain bold before iOS 13.
+        UIFont *font = [NGTheme boldFont:floorf(d * 26.0f / 60.0f)];
         CGSize size = [self.initials sizeWithFont:font];
         [[UIColor whiteColor] setFill];
-        [self.initials drawAtPoint:CGPointMake(floorf((d - size.width) / 2), floorf((d - size.height) / 2)) withFont:font];
+        [self.initials drawAtPoint:CGPointMake(floorf((d - size.width) / 2.0f), floorf((d - size.height) / 2.0f)) withFont:font];
     }
 
     if (self.showsOnline) {
-        CGFloat outer = floorf(d * 0.3f), inner = outer - 4;
-        CGRect o = CGRectMake(d - outer + 1, d - outer + 1, outer, outer);
+        // recentStatusOnlineIcon(.regular): 14pt, item background ring, onlineDotColor 0x4cc91f;
+        // ChatListItem places it at (width - 14 - 2, height - 14 - 2).
+        CGRect bounds = CGRectMake(d - 14.0f - 2.0f, d - 14.0f - 2.0f, 14.0f, 14.0f);
         [[UIColor whiteColor] setFill];
-        [[UIBezierPath bezierPathWithOvalInRect:o] fill];
+        [[UIBezierPath bezierPathWithOvalInRect:bounds] fill];
         [NGHex(0x4cc91f) setFill];
-        [[UIBezierPath bezierPathWithOvalInRect:CGRectInset(o, (outer - inner) / 2, (outer - inner) / 2)] fill];
+        [[UIBezierPath bezierPathWithOvalInRect:CGRectInset(bounds, 2.0f, 2.0f)] fill];
     }
-}
-
-@end
-
-#pragma mark - Checks
-
-@implementation NGChecksView
-
-- (instancetype)initWithFrame:(CGRect)frame {
-    if ((self = [super initWithFrame:frame])) {
-        self.opaque = NO;
-        self.backgroundColor = [UIColor clearColor];
-        self.contentMode = UIViewContentModeRedraw;
-        self.color = [NGTheme accentColor];
-    }
-    return self;
-}
-
-- (void)setStatus:(NGMessageStatus)status {
-    _status = status;
-    [self setNeedsDisplay];
-}
-
-- (void)setColor:(UIColor *)color {
-    _color = color;
-    [self setNeedsDisplay];
-}
-
-- (void)drawRect:(CGRect)rect {
-    [self.color setStroke];
-    CGFloat h = self.bounds.size.height, y = floorf((h - 10) / 2);
-    UIBezierPath *p = [UIBezierPath bezierPath];
-    p.lineWidth = 1.4f;
-    p.lineCapStyle = kCGLineCapRound;
-    p.lineJoinStyle = kCGLineJoinRound;
-    if (self.status == NGMessageStatusSending) {
-        CGRect clock = CGRectMake(2, y, 10, 10);
-        [p appendPath:[UIBezierPath bezierPathWithOvalInRect:clock]];
-        [p moveToPoint:CGPointMake(7, y + 2.5f)];
-        [p addLineToPoint:CGPointMake(7, y + 5)];
-        [p addLineToPoint:CGPointMake(9, y + 6)];
-    } else {
-        [p moveToPoint:CGPointMake(1, y + 5.5f)];
-        [p addLineToPoint:CGPointMake(4, y + 8.5f)];
-        [p addLineToPoint:CGPointMake(10, y + 1.5f)];
-        if (self.status == NGMessageStatusRead) {
-            [p moveToPoint:CGPointMake(7, y + 7.5f)];
-            [p addLineToPoint:CGPointMake(8, y + 8.5f)];
-            [p addLineToPoint:CGPointMake(14, y + 1.5f)];
-        }
-    }
-    [p stroke];
 }
 
 @end
@@ -235,7 +189,7 @@
     UIImageView *_badgeBackground;
     UIImageView *_pin;
     UIImageView *_mute;
-    NGChecksView *_checks;
+    UIImageView *_checks;
     UIView *_separator;
     UIView *_background;
     NGChat *_chat;
@@ -248,17 +202,18 @@
         self.selectedBackgroundView = [NGTheme highlightView];
 
         _avatar = [[NGAvatarView alloc] initWithFrame:CGRectMake(0, 0, 60, 60)];
-        _title = [NGTheme labelWithFont:[NGTheme mediumFont:16] color:[UIColor blackColor]];
+        // ChatListItem: Font.semibold(16), Font.regular(15), Font.regular(14), semibold(12) badge.
+        _title = [NGTheme labelWithFont:[NGTheme semiboldFont:16] color:[UIColor blackColor]];
         _message = [NGTheme labelWithFont:[NGTheme regularFont:15] color:[NGTheme secondaryTextColor]];
         _message.numberOfLines = 2;
         _date = [NGTheme labelWithFont:[NGTheme regularFont:14] color:[NGTheme secondaryTextColor]];
         _badgeBackground = [[UIImageView alloc] initWithFrame:CGRectZero];
-        _badge = [NGTheme labelWithFont:[NGTheme regularFont:14] color:[UIColor whiteColor]];
+        _badge = [NGTheme labelWithFont:[NGTheme semiboldFont:12] color:[UIColor whiteColor]];
         _badge.textAlignment = NSTextAlignmentCenter;
-        _pin = [[UIImageView alloc] initWithImage:[NGTheme icon:NGIconPin size:20 color:NGHex(0xb6b6bb)]];
-        _mute = [[UIImageView alloc] initWithImage:[NGTheme icon:NGIconMute size:15 color:NGHex(0xa7a7ad)]];
-        _checks = [[NGChecksView alloc] initWithFrame:CGRectMake(0, 0, 16, 12)];
-        _checks.color = [NGTheme accentColor];
+        // chatList.pinnedBadgeColor 0xb6b6bb, muteIconColor 0xa7a7ad
+        _pin = [[UIImageView alloc] initWithImage:NGTintedAsset(@"list_pinned", NGHex(0xb6b6bb))];
+        _mute = [[UIImageView alloc] initWithImage:NGTintedAsset(@"list_muted", NGHex(0xa7a7ad))];
+        _checks = [[UIImageView alloc] initWithFrame:CGRectZero];
         _separator = [NGTheme separatorView];
 
         for (UIView *v in @[ _avatar, _title, _message, _date, _badgeBackground, _badge, _pin, _mute, _checks, _separator ]) {
@@ -304,11 +259,18 @@
 
     BOOL showChecks = last.outgoing && chat.kind != NGChatKindSaved && chat.kind != NGChatKindChannel && !chat.draft.length;
     _checks.hidden = !showChecks;
-    _checks.status = last.status;
+    // chatList.checkmarkColor: dayClassic is not `day`, so 0x21c004;
+    // pendingIndicatorColor 0x8e8e93 for the clock.
+    if (last.status == NGMessageStatusSending) {
+        _checks.image = NGClockFrameImage(NGHex(0x8e8e93));
+    } else {
+        _checks.image = NGStatusCheckImage(NGHex(0x21c004), last.status != NGMessageStatusRead);
+    }
 
     _badge.text = chat.unreadCount > 0 ? [NSString stringWithFormat:@"%ld", (long)chat.unreadCount] : nil;
     _badge.hidden = _badgeBackground.hidden = chat.unreadCount == 0;
-    _badgeBackground.image = [NGTheme badgeImageWithColor:chat.muted ? NGHex(0xb6b6bb) : [NGTheme accentColor]];
+    // unreadBadgeActiveBackgroundColor = accent, unreadBadgeInactiveBackgroundColor 0xb6b6bb, diameter 20
+    _badgeBackground.image = NGBadgeBackgroundImage(chat.muted ? NGHex(0xb6b6bb) : [NGTheme accentColor], 20.0f);
     _pin.hidden = !(chat.pinned && chat.unreadCount == 0);
     _mute.hidden = !chat.muted;
     [self setNeedsLayout];
@@ -325,14 +287,16 @@
     _date.frame = CGRectMake(right - dateW, 10, dateW, 18);
     CGFloat titleRight = right - dateW - 6;
     if (!_checks.hidden) {
-        _checks.frame = CGRectMake(right - dateW - 18, 13, 16, 12);
-        titleRight -= 18;
+        CGSize cs = _checks.image.size;
+        _checks.frame = CGRectMake(right - dateW - 2 - cs.width, 12, cs.width, cs.height);
+        titleRight -= cs.width + 2;
     }
 
-    CGFloat titleMax = titleRight - left - (_mute.hidden ? 0 : 20);
+    CGSize muteSize = _mute.image.size;
+    CGFloat titleMax = titleRight - left - (_mute.hidden ? 0 : muteSize.width + 2);
     CGFloat titleW = MIN(titleMax, [NGTheme widthOfText:_title.text font:_title.font]);
     _title.frame = CGRectMake(left, 8, titleW, 21);
-    _mute.frame = CGRectMake(left + titleW + 3, 11, 15, 15);
+    _mute.frame = CGRectMake(left + titleW + 1, 7, muteSize.width, muteSize.height);
 
     CGFloat messageRight = right;
     if (!_badge.hidden) {
@@ -341,8 +305,9 @@
         _badge.frame = _badgeBackground.frame;
         messageRight -= bw + 6;
     } else if (!_pin.hidden) {
-        _pin.frame = CGRectMake(right - 20, 42, 20, 20);
-        messageRight -= 26;
+        CGSize ps = _pin.image.size;
+        _pin.frame = CGRectMake(right - ps.width, 41, ps.width, ps.height);
+        messageRight -= ps.width + 6;
     }
     CGSize fit = [_message sizeThatFits:CGSizeMake(messageRight - left, 40)];
     _message.frame = CGRectMake(left, 30, messageRight - left, MIN(40, ceilf(fit.height)));

@@ -7,9 +7,19 @@
 захардкожены в `Sources/NGModel.m`. Отправка работает локально: сообщение
 проходит «часики → одна галка → две галки», собеседник «печатает…» и отвечает.
 
-Цвета и метрики взяты из дневной темы Telegram в этом репо
-(`DefaultDayPresentationTheme.swift`, градиенты аватарок из `AvatarNode.swift`).
-Иконки рисуются CoreGraphics в коде, ассетов нет.
+Внешний вид не нарисован заново, а перенесён из Swift-кода этого репо:
+
+| Что | Откуда (Swift) | Здесь |
+|---|---|---|
+| Пузыри | `ChatMessageBubbleImages.swift` `messageBubbleImage` | `NGOriginal.m` построчно |
+| Галочки, часики | `PresentationThemeEssentialGraphics.swift`, `PresentationResourcesChatList.swift` | `NGOriginal.m` |
+| Иконки настроек | `PresentationResourcesSettings.swift` `renderSettingsIcon` | `NGOriginal.m` |
+| Обои: градиент + анимация фазы | `SoftwareGradientBackground.swift` | `NGWallpaper.m` |
+| Обои: узор | `fqv01SQemVIBAAAApND8LDRUhRU.tgv`, soft light 50% | `Resources/wallpaper_pattern*.png` |
+| Таббар | `TabBarNode.swift` | `NGTabBarController.m` |
+| Кривые отправки | `ChatMessageTransitionNode.swift` (`.bezier`), `Spring.swift` | `NGCurves.m` |
+| Метрики сообщений | `ChatMessageItemLayoutConstants.compact`, `ChatMessageDateAndStatusNode` | `NGChatController.m` |
+| Иконки | `submodules/TelegramUI/Images.xcassets` | `tools/import_assets.py` → `Resources/` |
 
 ## Что есть
 
@@ -35,6 +45,10 @@ make package install THEOS_DEVICE_IP=192.168.1.5   # сразу на девай�
 ```
 
 Предупреждения `linking in .tbd file ... built for iOS Simulator` безвредны.
+Оригинальные иконки перегоняются `tools/import_assets.py` (нужен `pdftocairo` из poppler).
+Анимации иконок таббара (`TabChats.json` и др.) подхватятся, если положить в `Resources/`
+кадры `anim_tab_<имя>_<n>.png`; без них таббар показывает статичные иконки.
+
 Иконка и launch-картинки (`Default-568h@2x.png` обязателен, иначе на iPhone 5
 будет letterbox) генерятся `tools/make_images.py`.
 
