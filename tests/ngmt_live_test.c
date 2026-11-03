@@ -15,10 +15,14 @@ static const char *api_hash;
 
 static int call(ngmt_session *s, ngmt_buf *q, ngtl_node **out, char *err) {
     ngmt_buf w = {0}, r = {0};
-    ngmt_put_int(&w, 0xda9b0d0d); ngmt_put_int(&w, 232);
-    ngmt_put_int(&w, 0xc1cd5ea9); ngmt_put_int(&w, 0); ngmt_put_int(&w, (uint32_t)api_id);
-    ngmt_put_cstring(&w, "test"); ngmt_put_cstring(&w, "Linux"); ngmt_put_cstring(&w, "0.1");
-    ngmt_put_cstring(&w, "en"); ngmt_put_cstring(&w, ""); ngmt_put_cstring(&w, "en");
+    static int inited = 0;
+    if (!inited || !getenv("NG_INIT_ONCE")) {
+        ngmt_put_int(&w, 0xda9b0d0d); ngmt_put_int(&w, 232);
+        ngmt_put_int(&w, 0xc1cd5ea9); ngmt_put_int(&w, 0); ngmt_put_int(&w, (uint32_t)api_id);
+        ngmt_put_cstring(&w, "test"); ngmt_put_cstring(&w, "Linux"); ngmt_put_cstring(&w, "0.1");
+        ngmt_put_cstring(&w, "en"); ngmt_put_cstring(&w, ""); ngmt_put_cstring(&w, "en");
+        inited = 1;
+    }
     ngmt_put_bytes_raw(&w, q->data, q->len);
     int code = 0;
     int rc = ngmt_call(s, w.data, w.len, &r, &code, err, 128);
@@ -45,6 +49,7 @@ int main(void) {
     if (rc || ngmt_create_auth_key(s)) { printf("connect/key: %s\n", ngmt_last_error(s)); return 1; }
 
     char phone[16], err[128];
+    if (getenv("NG_PING")) printf("ping %d\n", ngmt_ping(s));
     srand((unsigned)time(NULL));
     snprintf(phone, sizeof(phone), "99966%d%04d", dc, rand() % 10000);
     ngmt_buf q = {0};
@@ -58,8 +63,9 @@ int main(void) {
     const ngtl_node *length = type ? ngtl_get(type, "length") : NULL;
     char code[16] = {0};
     int len = length ? (int)length->i : 5;
+    if (getenv("NG_CODE_LEN")) len = atoi(getenv("NG_CODE_LEN"));
     for (int i = 0; i < len && i < 15; i++) code[i] = (char)('0' + dc);   /* the DC, repeated */
-    printf("code length %d -> %s, hash %zu bytes\n", len, code, hash ? hash->len : 0);
+    printf("code length %d -> %s, hash %zu bytes [%s]\n", len, code, hash ? hash->len : 0, hash ? (char *)hash->bytes : "");
     char code_hash[256];
     snprintf(code_hash, sizeof(code_hash), "%s", hash ? (char *)hash->bytes : "");
     ngtl_free(n);
