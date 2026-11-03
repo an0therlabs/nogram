@@ -438,6 +438,10 @@ struct ngmt_session {
     uint64_t salt;
     uint64_t session_id;
     uint32_t seq;
+    /* Content-related messages from the server not yet acknowledged; sent as
+       msgs_ack in the same container as the next request. */
+    uint64_t pending_acks[128];
+    int pending_ack_count;
     uint64_t last_msg_id;
     int64_t time_offset;
     char error[256];
@@ -1046,7 +1050,7 @@ static int send_encrypted(ngmt_session *s, const uint8_t *body, size_t len, uint
 }
 
 /* Receives one encrypted message; *body gets the message body. */
-static int recv_encrypted(ngmt_session *s, ngmt_buf *body, uint64_t *msg_id_out) {
+static int recv_encrypted(ngmt_session *s, ngmt_buf *body, uint64_t *msg_id_out, uint32_t *seq_out) {
     ngmt_buf p = {0};
     int rc = recv_packet(s, &p);
     if (rc) { ngmt_buf_free(&p); return rc; }
@@ -1072,7 +1076,8 @@ static int recv_encrypted(ngmt_session *s, ngmt_buf *body, uint64_t *msg_id_out)
     ngmt_get_long(&r);   /* salt */
     ngmt_get_long(&r);   /* session */
     uint64_t msg_id = ngmt_get_long(&r);
-    ngmt_get_int(&r);    /* seq */
+    uint32_t seq = ngmt_get_int(&r);
+    if (seq_out) *seq_out = seq;
     uint32_t len = ngmt_get_int(&r);
     if (r.error || len > elen - 32) { free(plain); set_error(s, "bad message length"); return NGMT_ERR_PROTO; }
     body->len = 0;
@@ -1086,14 +1091,47 @@ int ngmt__send_service(ngmt_session *s, const uint8_t *body, size_t len) {
     return send_encrypted(s, body, len, next_msg_id(s), 0);
 }
 
-static void send_ack(ngmt_session *s, uint64_t msg_id) {
-    ngmt_buf b = {0};
-    ngmt_put_int(&b, 0x62d6b459);
-    ngmt_put_int(&b, 0x1cb5c415);
-    ngmt_put_int(&b, 1);
-    ngmt_put_long(&b, msg_id);
-    send_encrypted(s, b.data, b.len, next_msg_id(s), 0);
-    ngmt_buf_free(&b);
+static void queue_ack(ngmt_session *s, uint64_t msg_id) {
+    for (int i = 0; i < s->pending_ack_count; i++) if (s->pending_acks[i] == msg_id) return;
+    if (s->pending_ack_count == (int)(sizeof(s->pending_acks) / sizeof(s->pending_acks[0]))) {
+        memmove(s->pending_acks, s->pending_acks + 1, sizeof(uint64_t) * (size_t)(s->pending_ack_count - 1));
+        s->pending_ack_count--;
+    }
+    s->pending_acks[s->pending_ack_count++] = msg_id;
+}
+
+/* Sends a content-related request, together with the pending acks in one
+   msg_container when there are any (as the official clients do). */
+static int send_request(ngmt_session *s, const uint8_t *body, size_t len, uint64_t *msg_id_out) {
+    if (s->pending_ack_count == 0) {
+        uint64_t id = next_msg_id(s);
+        *msg_id_out = id;
+        return send_encrypted(s, body, len, id, 1);
+    }
+    ngmt_buf ack = {0};
+    ngmt_put_int(&ack, 0x62d6b459);   /* msgs_ack */
+    ngmt_put_int(&ack, 0x1cb5c415);
+    ngmt_put_int(&ack, (uint32_t)s->pending_ack_count);
+    for (int i = 0; i < s->pending_ack_count; i++) ngmt_put_long(&ack, s->pending_acks[i]);
+    uint64_t ack_id = next_msg_id(s), req_id = next_msg_id(s);
+    ngmt_buf c = {0};
+    ngmt_put_int(&c, 0x73f1f8dc);     /* msg_container */
+    ngmt_put_int(&c, 2);
+    ngmt_put_long(&c, ack_id);
+    ngmt_put_int(&c, s->seq * 2);     /* not content-related */
+    ngmt_put_int(&c, (uint32_t)ack.len);
+    ngmt_put_bytes_raw(&c, ack.data, ack.len);
+    ngmt_put_long(&c, req_id);
+    ngmt_put_int(&c, s->seq * 2 + 1); /* content-related */
+    s->seq++;
+    ngmt_put_int(&c, (uint32_t)len);
+    ngmt_put_bytes_raw(&c, body, len);
+    int rc = send_encrypted(s, c.data, c.len, next_msg_id(s), 0);
+    ngmt_buf_free(&ack);
+    ngmt_buf_free(&c);
+    if (rc == NGMT_OK) s->pending_ack_count = 0;
+    *msg_id_out = req_id;
+    return rc;
 }
 
 static int gunzip(const uint8_t *in, size_t len, ngmt_buf *out) {
@@ -1130,7 +1168,7 @@ static int handle_object(ngmt_session *s, ngmt_reader *r, size_t end, uint64_t r
                 uint32_t seq = ngmt_get_int(r);
                 uint32_t len = ngmt_get_int(r);
                 size_t inner_end = r->pos + len;
-                if (seq & 1) send_ack(s, inner_id);
+                if (seq & 1) queue_ack(s, inner_id);
                 int st = handle_object(s, r, inner_end, req_msg_id, inner_id, result, rc, error_code, error_message, error_cap);
                 r->pos = inner_end;
                 if (st != WAIT_MORE) state = st;
@@ -1210,14 +1248,16 @@ static int call_raw(ngmt_session *s, const uint8_t *body, size_t len, ngmt_buf *
                     int *error_code, char *error_message, size_t error_cap) {
     if (!s->has_key) { set_error(s, "no auth key"); return NGMT_ERR_PROTO; }
     for (int attempt = 0; attempt < 3; attempt++) {
-        uint64_t msg_id = next_msg_id(s);
-        int rc = send_encrypted(s, body, len, msg_id, 1);
+        uint64_t msg_id = 0;
+        int rc = send_request(s, body, len, &msg_id);
         if (rc) return rc;
         for (;;) {
             ngmt_buf in = {0};
             uint64_t in_id = 0;
-            rc = recv_encrypted(s, &in, &in_id);
+            uint32_t in_seq = 0;
+            rc = recv_encrypted(s, &in, &in_id, &in_seq);
             if (rc) { ngmt_buf_free(&in); return rc; }
+            if (in_seq & 1) queue_ack(s, in_id);
             ngmt_reader r = { in.data, in.len, 0, 0 };
             int call_rc = NGMT_ERR_PROTO;
             int st = handle_object(s, &r, in.len, msg_id, in_id, result, &call_rc, error_code, error_message, error_cap);

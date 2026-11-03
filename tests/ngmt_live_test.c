@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 static int api_id;
 static const char *api_hash;
@@ -45,11 +46,20 @@ int main(void) {
     ngmt_session *s = ngmt_session_new();
     int dc = getenv("NG_DC") ? atoi(getenv("NG_DC")) : 2;
     const char *ip = dc == 1 ? "149.154.175.10" : dc == 3 ? "149.154.175.117" : "149.154.167.40";
-    int rc = getenv("NGMT_HTTP") ? ngmt_connect_http(s, ip, 80, dc, 1, NULL, 0) : ngmt_connect(s, ip, 443, dc, 1);
+    int rc = getenv("NGMT_HTTP") ? ngmt_connect_http(s, ip, 80, dc, 1, NULL, 0) : ngmt_connect(s, ip, getenv("NG_PORT") ? atoi(getenv("NG_PORT")) : 443, dc, 1);
     if (rc || ngmt_create_auth_key(s)) { printf("connect/key: %s\n", ngmt_last_error(s)); return 1; }
 
     char phone[16], err[128];
     if (getenv("NG_PING")) printf("ping %d\n", ngmt_ping(s));
+    if (getenv("NG_CONFIG")) {
+        ngmt_buf cq = {0};
+        ngtl_node *cfg = NULL;
+        ngmt_put_int(&cq, 0xc4f9186b);
+        if (call(s, &cq, &cfg, err)) { printf("getConfig: %s\n", err); return 1; }
+        const ngtl_node *tm = ngtl_get(cfg, "test_mode"), *dcn = ngtl_get(cfg, "this_dc");
+        printf("config: test_mode=%lld this_dc=%lld\n", tm ? (long long)tm->i : -1, dcn ? (long long)dcn->i : -1);
+        return 0;
+    }
     srand((unsigned)time(NULL));
     snprintf(phone, sizeof(phone), "99966%d%04d", dc, rand() % 10000);
     ngmt_buf q = {0};
@@ -70,9 +80,22 @@ int main(void) {
     snprintf(code_hash, sizeof(code_hash), "%s", hash ? (char *)hash->bytes : "");
     ngtl_free(n);
 
+    if (getenv("NG_SLEEP")) sleep(atoi(getenv("NG_SLEEP")));
     q.len = 0;
     ngmt_put_int(&q, 0x8d52a951); ngmt_put_int(&q, 1); ngmt_put_cstring(&q, phone);
     ngmt_put_cstring(&q, code_hash); ngmt_put_cstring(&q, code);
+    if (getenv("NG_TRY")) {
+        const char *codes[] = { "22222", "222222", "11111", "33333", "00000", "12345", "2222" };
+        for (int i = 0; i < 7; i++) {
+            q.len = 0;
+            ngmt_put_int(&q, 0x8d52a951); ngmt_put_int(&q, 1); ngmt_put_cstring(&q, phone);
+            ngmt_put_cstring(&q, code_hash); ngmt_put_cstring(&q, codes[i]);
+            int rc = call(s, &q, &n, err);
+            printf("code %s -> %s\n", codes[i], rc ? err : n->ctor);
+            if (!rc) break;
+        }
+        return 0;
+    }
     if (call(s, &q, &n, err)) { printf("signIn: %s\n", err); return 1; }
     printf("auth.signIn -> %s\n", n->ctor);
     if (strcmp(n->ctor, "auth.authorizationSignUpRequired") == 0) {
