@@ -68,18 +68,89 @@ static UIColor *NGPlaceholderColor(void) { return NGHex(0xc8c8ce); }   // list.i
 
 #pragma mark - Base
 
+// layoutAuthorizationItems (AuthorizationLayout.swift): every item has a
+// spacing before and after with a weight and a cap. Free height is shared by
+// weight, capped spacings are fixed and the rest re-shared, three passes; the
+// column is then centred vertically in the bounds.
+typedef struct { CGFloat height, beforeWeight, beforeMax, afterWeight, afterMax; } NGAuthItem;
+
+static CGFloat NGSolveAuthorizationLayout(const NGAuthItem *items, int n, CGFloat boundsY, CGFloat boundsHeight, CGFloat *outY) {
+    CGFloat before[8], after[8];
+    BOOL beforeSet[8] = {0}, afterSet[8] = {0};
+    CGFloat fixedHeight = 0, totalWeight = 0;
+    for (int i = 0; i < n; i++) {
+        fixedHeight += items[i].height;
+        totalWeight += items[i].beforeWeight + items[i].afterWeight;
+    }
+    CGFloat remaining = MAX(0.0f, boundsHeight - fixedHeight);
+    for (int pass = 0; pass < 3; pass++) {
+        if (pass == 0 || pass == 2) {
+            for (int i = 0; i < n; i++) {
+                if (!beforeSet[i]) {
+                    before[i] = items[i].beforeMax == 0 ? 0 : floorf(items[i].beforeWeight * remaining / MAX(totalWeight, 0.0001f));
+                    beforeSet[i] = YES;
+                }
+                if (!afterSet[i]) {
+                    after[i] = items[i].afterMax == 0 ? 0 : floorf(items[i].afterWeight * remaining / MAX(totalWeight, 0.0001f));
+                    afterSet[i] = YES;
+                }
+            }
+        } else {
+            BOOL updated = NO;
+            for (int i = 0; i < n; i++) {
+                if (items[i].beforeMax != 0 && before[i] > items[i].beforeMax) updated = YES;
+                if (items[i].afterMax != 0 && after[i] > items[i].afterMax) updated = YES;
+            }
+            if (!updated) continue;
+            for (int i = 0; i < n; i++) {
+                if (items[i].beforeMax != 0) {
+                    if (before[i] > items[i].beforeMax) before[i] = items[i].beforeMax; else beforeSet[i] = NO;
+                }
+                if (items[i].afterMax != 0) {
+                    if (after[i] > items[i].afterMax) after[i] = items[i].afterMax; else afterSet[i] = NO;
+                }
+            }
+            fixedHeight = 0; totalWeight = 0;
+            for (int i = 0; i < n; i++) {
+                fixedHeight += items[i].height;
+                if (beforeSet[i]) fixedHeight += before[i]; else if (items[i].beforeMax != 0) totalWeight += items[i].beforeWeight;
+                if (afterSet[i]) fixedHeight += after[i]; else if (items[i].afterMax != 0) totalWeight += items[i].afterWeight;
+            }
+            remaining = MAX(0.0f, boundsHeight - fixedHeight);
+        }
+    }
+    CGFloat total = 0;
+    for (int i = 0; i < n; i++) total += before[i] + after[i] + items[i].height;
+    CGFloat y = boundsY + floorf((boundsHeight - total) / 2.0f);
+    for (int i = 0; i < n; i++) {
+        y += before[i];
+        outY[i] = y;
+        y += items[i].height + after[i];
+    }
+    return total;
+}
+
+static BOOL NGIsNarrowScreen(void) {
+    return [UIScreen mainScreen].bounds.size.width <= 320.0f;
+}
+
 @interface NGLoginStepController : UIViewController
 @property (nonatomic, strong) UILabel *titleLabel;
 @property (nonatomic, strong) UILabel *noticeLabel;
-@property (nonatomic, strong) UILabel *errorLabel;
 @property (nonatomic, strong) NGProceedButton *proceed;
 @property (nonatomic, copy) void (^onLoggedIn)(void);
 @property (nonatomic) CGFloat keyboardHeight;
-/* True when the keyboard leaves too little room (iPhone 4: 244pt):
-   the notice and optional rows hide and rows shrink so nothing goes
-   under the Continue button. */
-@property (nonatomic, readonly) BOOL compact;
-- (CGFloat)layoutContentFromY:(CGFloat)y width:(CGFloat)width;
+@property (nonatomic) BOOL busy;
+// Subclass hooks.
+- (BOOL)showsNavigationBar;          /* phone: only on a 320pt screen; code: always (back) */
+- (BOOL)usesProceedButton;           /* the 50pt capsule (wider than 320pt only) */
+- (BOOL)wantsNextItem;               /* "Далее" in the bar where the capsule is hidden */
+- (void)setProceedEnabled:(BOOL)enabled;
+- (CGFloat)contentHeight;
+- (CGFloat)contentSpacingBefore;
+- (CGFloat)contentSpacingAfter;
+- (void)layoutContentAtY:(CGFloat)y width:(CGFloat)width;
+- (void)proceedTapped;
 - (void)showError:(NSString *)error;
 @end
 
@@ -89,21 +160,60 @@ static UIColor *NGPlaceholderColor(void) { return NGHex(0xc8c8ce); }   // list.i
     [super viewDidLoad];
     [NGTheme disableExtendedLayoutFor:self];
     self.view.backgroundColor = [UIColor whiteColor];
+    self.navigationItem.backBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Назад" style:UIBarButtonItemStylePlain target:nil action:nil];
+    // Font.bold(28) title, Font.regular(17) centred notice.
     _titleLabel = [NGTheme labelWithFont:[NGTheme boldFont:28.0f] color:[UIColor blackColor]];
     _titleLabel.textAlignment = NSTextAlignmentCenter;
     _noticeLabel = [NGTheme labelWithFont:[NGTheme regularFont:17.0f] color:[UIColor blackColor]];
     _noticeLabel.textAlignment = NSTextAlignmentCenter;
     _noticeLabel.numberOfLines = 0;
-    _errorLabel = [NGTheme labelWithFont:[NGTheme regularFont:15.0f] color:NGHex(0xff3b30)];
-    _errorLabel.textAlignment = NSTextAlignmentCenter;
-    _errorLabel.numberOfLines = 0;
     _proceed = [[NGProceedButton alloc] initWithFrame:CGRectZero];
-    for (UIView *v in @[ _titleLabel, _noticeLabel, _errorLabel, _proceed ]) [self.view addSubview:v];
+    [_proceed addTarget:self action:@selector(proceedTapped) forControlEvents:UIControlEventTouchUpInside];
+    for (UIView *v in @[ _titleLabel, _noticeLabel, _proceed ]) [self.view addSubview:v];
+}
+
+- (BOOL)showsNavigationBar { return NGIsNarrowScreen(); }
+- (BOOL)usesProceedButton { return !NGIsNarrowScreen(); }
+- (BOOL)wantsNextItem { return NO; }
+- (CGFloat)contentHeight { return 0; }
+- (CGFloat)contentSpacingBefore { return 30.0f; }
+- (CGFloat)contentSpacingAfter { return 0; }
+- (void)layoutContentAtY:(CGFloat)y width:(CGFloat)width {}
+- (void)proceedTapped {}
+
+// Narrow screens: Common_Next ("Далее", done style) in the navigation bar,
+// a spinner in its place while a request runs (updateNavigationItems).
+- (void)updateNavigationItems {
+    if (![self usesProceedButton] && [self wantsNextItem]) {
+        if (_busy) {
+            UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
+            [spinner startAnimating];
+            self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithCustomView:spinner];
+        } else {
+            UIBarButtonItem *next = [[UIBarButtonItem alloc] initWithTitle:@"Далее" style:UIBarButtonItemStyleDone target:self action:@selector(proceedTapped)];
+            next.enabled = _proceed.enabled;
+            self.navigationItem.rightBarButtonItem = next;
+        }
+    } else {
+        self.navigationItem.rightBarButtonItem = nil;
+    }
+}
+
+- (void)setBusy:(BOOL)busy {
+    _busy = busy;
+    _proceed.busy = busy;
+    [self updateNavigationItems];
+}
+
+- (void)setProceedEnabled:(BOOL)enabled {
+    _proceed.enabled = enabled;
+    self.navigationItem.rightBarButtonItem.enabled = enabled;
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    [self.navigationController setNavigationBarHidden:YES animated:animated];
+    [self.navigationController setNavigationBarHidden:![self showsNavigationBar] animated:animated];
+    [self updateNavigationItems];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardChanged:) name:UIKeyboardWillChangeFrameNotification object:nil];
 }
 
@@ -119,59 +229,44 @@ static UIColor *NGPlaceholderColor(void) { return NGHex(0xc8c8ce); }   // list.i
     [UIView animateWithDuration:duration animations:^{ [self.view setNeedsLayout]; [self.view layoutIfNeeded]; }];
 }
 
-- (CGFloat)layoutContentFromY:(CGFloat)y width:(CGFloat)width { return y; }
-
-- (BOOL)compact {
-    return self.view.bounds.size.height - _keyboardHeight < 330.0f;
-}
-
+// containerLayoutUpdated: title (spacing titleInset), notice (18), content
+// (contentSpacingBefore/After), laid out between the top inset and the
+// keyboard less additionalBottomInset (80 above 320pt for the button, else 10).
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     CGFloat w = self.view.bounds.size.width, h = self.view.bounds.size.height;
-    CGFloat maxWidth = w - NGLoginInset * 2.0f;
-    BOOL compact = self.compact;
-    BOOL hasError = _errorLabel.text.length > 0;
-    CGFloat buttonH = compact ? 44.0f : 50.0f;
-    CGFloat buttonInset = compact ? 8.0f : NGLoginInset;
-    _proceed.layer.cornerRadius = buttonH / 2.0f;
-    _proceed.frame = CGRectMake(NGLoginInset, h - _keyboardHeight - buttonH - buttonInset, maxWidth, buttonH);
+    BOOL narrow = NGIsNarrowScreen();
+    CGFloat maxWidth = MIN(430.0f, w);
+    CGFloat top = 0;
+    if (![self showsNavigationBar] && [[UIDevice currentDevice].systemVersion floatValue] >= 7.0f) top = 20.0f;   /* status bar */
+    CGFloat titleInset = narrow ? 0.0f : 18.0f;
+    CGFloat additionalBottom = narrow ? 10.0f : 80.0f;
 
-    CGFloat y = compact ? 40.0f : (_keyboardHeight > 0 ? 44.0f : 64.0f);
-    _titleLabel.font = [NGTheme boldFont:compact ? 22.0f : 28.0f];
+    BOOL button = [self usesProceedButton];
+    _proceed.hidden = !button;
+    CGFloat proceedW = maxWidth - NGLoginInset * 2.0f;
+    _proceed.frame = CGRectMake(floorf((w - proceedW) / 2.0f), h - _keyboardHeight - 50.0f - NGLoginInset, proceedW, 50.0f);
+    if (!button) additionalBottom = narrow ? 10.0f : 20.0f;
+
     CGSize titleSize = [NGTheme sizeOfText:_titleLabel.text font:_titleLabel.font width:maxWidth];
-    _titleLabel.frame = CGRectMake(NGLoginInset, y, maxWidth, titleSize.height);
-    y += titleSize.height + (compact ? 6.0f : 18.0f);
-
-    /* Compact: the error takes the notice's place, so it is never under the button. */
-    _noticeLabel.hidden = compact;
-    if (compact) {
-        CGSize errorSize = hasError ? [NGTheme sizeOfText:_errorLabel.text font:_errorLabel.font width:maxWidth] : CGSizeZero;
-        _errorLabel.frame = CGRectMake(NGLoginInset, y, maxWidth, errorSize.height);
-        y += hasError ? errorSize.height + 6.0f : 4.0f;
-        [self layoutContentFromY:y width:w];
-        return;
-    }
-    CGFloat noticeWidth = MIN(274.0f, w - 28.0f);
+    CGFloat noticeWidth = MIN(274.0f + 32.0f, maxWidth - 28.0f);
     CGSize noticeSize = [NGTheme sizeOfText:_noticeLabel.text font:_noticeLabel.font width:noticeWidth];
-    _noticeLabel.frame = CGRectMake(floorf((w - noticeWidth) / 2.0f), y, noticeWidth, noticeSize.height);
-    y += noticeSize.height + 30.0f;
-    y = [self layoutContentFromY:y width:w];
-    CGSize errorSize = [NGTheme sizeOfText:_errorLabel.text ?: @"" font:_errorLabel.font width:maxWidth];
-    _errorLabel.frame = CGRectMake(NGLoginInset, y + 10.0f, maxWidth, errorSize.height);
+    NGAuthItem items[3] = {
+        { titleSize.height, titleInset, titleInset, 0, 0 },
+        { noticeSize.height, 18.0f, 18.0f, 0, 0 },
+        { [self contentHeight], [self contentSpacingBefore], [self contentSpacingBefore], [self contentSpacingAfter], [self contentSpacingAfter] },
+    };
+    CGFloat ys[3];
+    NGSolveAuthorizationLayout(items, 3, top, h - top - _keyboardHeight - additionalBottom, ys);
+    _titleLabel.frame = CGRectMake(floorf((w - titleSize.width) / 2.0f), ys[0], titleSize.width, titleSize.height);
+    _noticeLabel.frame = CGRectMake(floorf((w - noticeWidth) / 2.0f), ys[1], noticeWidth, noticeSize.height);
+    [self layoutContentAtY:ys[2] width:w];
 }
 
+// Errors are alerts, as in AuthorizationSequenceController.
 - (void)showError:(NSString *)error {
-    _errorLabel.text = error;
-    [self.view setNeedsLayout];
-    if (error.length) {
-        CABasicAnimation *shake = [CABasicAnimation animationWithKeyPath:@"transform.translation.x"];
-        shake.fromValue = @(-8);
-        shake.toValue = @(8);
-        shake.duration = 0.06;
-        shake.autoreverses = YES;
-        shake.repeatCount = 3;
-        [_errorLabel.layer addAnimation:shake forKey:@"shake"];
-    }
+    if (!error.length) return;
+    [[[UIAlertView alloc] initWithTitle:nil message:error delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show];
 }
 
 @end
@@ -184,9 +279,19 @@ static UIColor *NGPlaceholderColor(void) { return NGHex(0xc8c8ce); }   // list.i
 @property (nonatomic, copy) NSString *phoneCodeHash;
 @property (nonatomic, copy) NSString *deliveredVia;
 @property (nonatomic) NSInteger codeLength;
+@property (nonatomic) BOOL failed;
 @end
 
+static CGFloat NGCodeItemHeight(void) { return NGIsNarrowScreen() ? 44.0f : 51.0f; }
+
+// Font.monospace(floor(13·h/28)); Menlo ships from iOS 7, Courier before.
+static UIFont *NGCodeFont(CGFloat itemHeight) {
+    CGFloat size = floorf(13.0f * itemHeight / 28.0f);
+    return [UIFont fontWithName:@"Menlo-Regular" size:size] ?: [UIFont fontWithName:@"Courier" size:size] ?: [UIFont systemFontOfSize:size];
+}
+
 @implementation NGCodeController {
+    BOOL _failed;
     UITextField *_hidden;
     NSArray *_boxes;
     NSArray *_digits;
@@ -202,18 +307,6 @@ static UIColor *NGPlaceholderColor(void) { return NGHex(0xc8c8ce); }   // list.i
     } else {
         self.noticeLabel.text = [NSString stringWithFormat:@"Мы отправили SMS с кодом на номер +%@.", self.phone];
     }
-    UIButton *back = [UIButton buttonWithType:UIButtonTypeCustom];
-    back.titleLabel.font = [NGTheme regularFont:17.0f];
-    [back setTitle:@"Изменить номер" forState:UIControlStateNormal];
-    [back setTitleColor:[NGTheme accentColor] forState:UIControlStateNormal];
-    [back setTitleColor:[[NGTheme accentColor] colorWithAlphaComponent:0.4f] forState:UIControlStateHighlighted];
-    [back addTarget:self.navigationController action:@selector(popViewControllerAnimated:) forControlEvents:UIControlEventTouchUpInside];
-    back.frame = CGRectMake(8, 2, 150, 40);
-    back.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-    [self.view addSubview:back];
-    self.proceed.title = @"Продолжить";
-    [self.proceed addTarget:self action:@selector(submit) forControlEvents:UIControlEventTouchUpInside];
-
     _hidden = [[UITextField alloc] initWithFrame:CGRectZero];
     _hidden.keyboardType = UIKeyboardTypeNumberPad;
     _hidden.delegate = self;
@@ -222,11 +315,13 @@ static UIColor *NGPlaceholderColor(void) { return NGHex(0xc8c8ce); }   // list.i
 
     NSMutableArray *boxes = [NSMutableArray array], *digits = [NSMutableArray array];
     for (NSInteger i = 0; i < MAX(1, self.codeLength); i++) {
+        // CodeInputView.ItemView: no fill, a 1pt+pixel border (plain separator,
+        // accent on the focused box, destructive after a wrong code), radius 15.
         UIView *box = [[UIView alloc] initWithFrame:CGRectZero];
-        box.backgroundColor = NGHex(0xf2f2f7);   // list.itemInputField backgroundColor
-        box.layer.cornerRadius = 10.0f;
-        box.layer.borderColor = [NGTheme accentColor].CGColor;
-        UILabel *digit = [NGTheme labelWithFont:[NGTheme regularFont:24.0f] color:[UIColor blackColor]];
+        box.layer.cornerRadius = 15.0f;
+        box.layer.borderWidth = 1.0f + [NGTheme pixel];
+        box.clipsToBounds = YES;
+        UILabel *digit = [NGTheme labelWithFont:NGCodeFont(NGCodeItemHeight()) color:[UIColor blackColor]];
         digit.textAlignment = NSTextAlignmentCenter;
         [box addSubview:digit];
         [self.view addSubview:box];
@@ -245,8 +340,18 @@ static UIColor *NGPlaceholderColor(void) { return NGHex(0xc8c8ce); }   // list.i
     [_hidden becomeFirstResponder];
 }
 
-- (CGFloat)layoutContentFromY:(CGFloat)y width:(CGFloat)width {
-    CGFloat boxW = 40.0f, boxH = self.compact ? 44.0f : 52.0f, spacing = 8.0f;
+// The code screen has no Continue button: a full code submits itself, and the
+// navigation bar carries the back button.
+- (BOOL)showsNavigationBar { return YES; }
+- (BOOL)usesProceedButton { return NO; }
+- (CGFloat)contentHeight { return NGCodeItemHeight(); }
+- (CGFloat)contentSpacingBefore { return 30.0f; }
+- (CGFloat)contentSpacingAfter { return 104.0f; }
+
+// CodeInputView.update: item height 44 (compact) or 51, width 24·h/28,
+// spacing 15, centred.
+- (void)layoutContentAtY:(CGFloat)y width:(CGFloat)width {
+    CGFloat boxH = NGCodeItemHeight(), boxW = floorf(24.0f * boxH / 28.0f), spacing = 15.0f;
     NSInteger n = _boxes.count;
     CGFloat total = n * boxW + (n - 1) * spacing;
     CGFloat x = floorf((width - total) / 2.0f);
@@ -255,7 +360,11 @@ static UIColor *NGPlaceholderColor(void) { return NGHex(0xc8c8ce); }   // list.i
         box.frame = CGRectMake(x + i * (boxW + spacing), y, boxW, boxH);
         [_digits[i] setFrame:box.bounds];
     }
-    return y + boxH;
+}
+
+- (void)setFailed:(BOOL)failed {
+    _failed = failed;
+    [self codeChanged];
 }
 
 - (BOOL)textField:(UITextField *)textField shouldChangeCharactersInRange:(NSRange)range replacementString:(NSString *)string {
@@ -269,25 +378,33 @@ static UIColor *NGPlaceholderColor(void) { return NGHex(0xc8c8ce); }   // list.i
     for (NSUInteger i = 0; i < _boxes.count; i++) {
         UILabel *digit = _digits[i];
         digit.text = i < code.length ? [code substringWithRange:NSMakeRange(i, 1)] : @"";
-        [_boxes[i] layer].borderWidth = i == code.length ? 1.5f : 0.0f;
+        UIColor *border = _failed ? NGHex(0xff3b30) : (i == code.length ? [NGTheme accentColor] : NGHex(0xc8c7cc));
+        [_boxes[i] layer].borderColor = border.CGColor;
     }
-    self.proceed.enabled = code.length == _boxes.count;
+    if (code.length > 0 && _failed) { _failed = NO; [self codeChanged]; return; }
     if (code.length == _boxes.count) [self submit];
 }
 
 - (void)submit {
     NSString *code = _hidden.text;
-    if (code.length == 0 || self.proceed.busy) return;
-    self.proceed.busy = YES;
-    [self showError:nil];
+    if (code.length == 0 || self.busy) return;
+    self.busy = YES;
     [[NGTelegram shared] signIn:self.phone phoneCodeHash:self.phoneCodeHash code:code completion:^(NSDictionary *user, NSString *error) {
-        self.proceed.busy = NO;
+        self.busy = NO;
         if (user) {
             if (self.onLoggedIn) self.onLoggedIn();
             return;
         }
-        if ([error isEqualToString:@"PHONE_CODE_INVALID"]) error = @"Неверный код. Попробуйте ещё раз.";
-        else if ([error isEqualToString:@"PHONE_CODE_EXPIRED"]) error = @"Срок действия кода истёк. Запросите новый.";
+        if ([error isEqualToString:@"PHONE_CODE_INVALID"]) {
+            /* As CodeInputView: the boxes turn red and shake, no alert. */
+            self->_hidden.text = @"";
+            self.failed = YES;
+            CABasicAnimation *shake = [CABasicAnimation animationWithKeyPath:@"transform.translation.x"];
+            shake.fromValue = @(-8); shake.toValue = @(8); shake.duration = 0.06; shake.autoreverses = YES; shake.repeatCount = 3;
+            for (UIView *box in self->_boxes) [box.layer addAnimation:shake forKey:@"shake"];
+            return;
+        }
+        if ([error isEqualToString:@"PHONE_CODE_EXPIRED"]) error = @"Срок действия кода истёк. Запросите новый.";
         else if ([error isEqualToString:@"SESSION_PASSWORD_NEEDED"]) error = @"У аккаунта включена двухэтапная аутентификация. Вход с облачным паролем этот клиент пока не умеет.";
         self->_hidden.text = @"";
         [self codeChanged];
@@ -302,13 +419,55 @@ static UIColor *NGPlaceholderColor(void) { return NGHex(0xc8c8ce); }   // list.i
 @interface NGPhoneController : NGLoginStepController <UITextFieldDelegate>
 @end
 
+// countryButtonBackground (136×67, cap 69): a separator along the top, and
+// along the bottom 10pt up with a notch pointing down under the code field.
+static UIImage *NGCountryBackground(void) {
+    CGSize size = CGSizeMake(136.0f, 67.0f);
+    UIGraphicsBeginImageContextWithOptions(size, NO, 0);
+    CGContextRef c = UIGraphicsGetCurrentContext();
+    CGFloat lw = [NGTheme pixel], inset = 24.0f, arrow = 10.0f;
+    CGContextSetStrokeColorWithColor(c, NGHex(0xc8c7cc).CGColor);
+    CGContextSetLineWidth(c, lw);
+    CGContextMoveToPoint(c, inset, lw / 2.0f);
+    CGContextAddLineToPoint(c, size.width - inset, lw / 2.0f);
+    CGContextStrokePath(c);
+    CGContextMoveToPoint(c, size.width - inset, size.height - arrow - lw / 2.0f);
+    CGContextAddLineToPoint(c, 69.0f, size.height - arrow - lw / 2.0f);
+    CGContextAddLineToPoint(c, 69.0f - arrow, size.height - lw / 2.0f);
+    CGContextAddLineToPoint(c, 69.0f - arrow - arrow, size.height - arrow - lw / 2.0f);
+    CGContextAddLineToPoint(c, inset, size.height - arrow - lw / 2.0f);
+    CGContextStrokePath(c);
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return [image stretchableImageWithLeftCapWidth:69 topCapHeight:1];
+}
+
+// phoneInputBackground (96×57, cap 95): the bottom separator and the short
+// vertical line between the code and the number.
+static UIImage *NGPhoneInputBackground(void) {
+    CGSize size = CGSizeMake(96.0f, 57.0f);
+    UIGraphicsBeginImageContextWithOptions(size, NO, 0);
+    CGContextRef c = UIGraphicsGetCurrentContext();
+    CGFloat lw = [NGTheme pixel], inset = 24.0f;
+    CGContextSetStrokeColorWithColor(c, NGHex(0xc8c7cc).CGColor);
+    CGContextSetLineWidth(c, lw);
+    CGContextMoveToPoint(c, inset, size.height - lw / 2.0f);
+    CGContextAddLineToPoint(c, size.width, size.height - lw / 2.0f);
+    CGContextStrokePath(c);
+    CGContextMoveToPoint(c, size.width - 2.0f + lw / 2.0f, size.height - 9.0f);
+    CGContextAddLineToPoint(c, size.width - 2.0f + lw / 2.0f, 8.0f);
+    CGContextStrokePath(c);
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return [image stretchableImageWithLeftCapWidth:95 topCapHeight:2];
+}
+
 @implementation NGPhoneController {
     UIButton *_country;
     UITextField *_codeField;
     UITextField *_numberField;
-    UIView *_separator1, *_separator2, *_separator3;
-    UILabel *_syncLabel;
-    NGSwitch *_syncSwitch;
+    UIImageView *_countryArrow;
+    UIImageView *_phoneBackground;
 }
 
 // The countries most numbers on this client will come from; the code field
@@ -326,13 +485,21 @@ static NSString *NGCountryForCode(NSString *code) {
     self.titleLabel.text = @"Ваш телефон";
     self.noticeLabel.text = @"Проверьте код страны и введите свой номер телефона.";
     self.proceed.title = @"Продолжить";
-    [self.proceed addTarget:self action:@selector(submit) forControlEvents:UIControlEventTouchUpInside];
 
+    // countryButton: 67pt, title inset (0, 40, 10, 0), over the stretchable
+    // line image with the arrow notch at x 49–69, the disclosure arrow right.
     _country = [UIButton buttonWithType:UIButtonTypeCustom];
     _country.titleLabel.font = [NGTheme regularFont:20.0f];
+    _country.titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
     [_country setTitleColor:[NGTheme accentColor] forState:UIControlStateNormal];
     _country.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+    _country.contentEdgeInsets = UIEdgeInsetsMake(0, 24.0f + 16.0f, 10.0f, 24.0f + 20.0f);
+    [_country setBackgroundImage:NGCountryBackground() forState:UIControlStateNormal];
+    _country.adjustsImageWhenHighlighted = NO;
     _country.userInteractionEnabled = NO;
+    _countryArrow = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"list_disclosure"]];
+    [_country addSubview:_countryArrow];
+    _phoneBackground = [[UIImageView alloc] initWithImage:NGPhoneInputBackground()];
 
     _codeField = [[UITextField alloc] initWithFrame:CGRectZero];
     _codeField.font = [NGTheme regularFont:20.0f];
@@ -340,28 +507,20 @@ static NSString *NGCountryForCode(NSString *code) {
     _codeField.text = @"+7";
     _codeField.delegate = self;
     _codeField.textAlignment = NSTextAlignmentCenter;
+    _codeField.contentVerticalAlignment = UIControlContentVerticalAlignmentCenter;
     [_codeField addTarget:self action:@selector(fieldsChanged) forControlEvents:UIControlEventEditingChanged];
 
     _numberField = [[UITextField alloc] initWithFrame:CGRectZero];
     _numberField.font = [NGTheme regularFont:20.0f];
     _numberField.keyboardType = UIKeyboardTypeNumberPad;
+    _numberField.contentVerticalAlignment = UIControlContentVerticalAlignmentCenter;
     _numberField.delegate = self;
     _numberField.attributedPlaceholder = [[NSAttributedString alloc] initWithString:@"Номер телефона"
                                                                          attributes:@{ NSForegroundColorAttributeName: NGPlaceholderColor(), NSFontAttributeName: [NGTheme regularFont:20.0f] }];
     [_numberField addTarget:self action:@selector(fieldsChanged) forControlEvents:UIControlEventEditingChanged];
 
-    _separator1 = [NGTheme separatorView];
-    _separator2 = [NGTheme separatorView];
-    _separator3 = [NGTheme separatorView];
 
-    _syncLabel = [NGTheme labelWithFont:[NGTheme regularFont:17.0f] color:[UIColor blackColor]];
-    _syncLabel.text = @"Синхронизировать контакты";
-    _syncSwitch = [[NGSwitch alloc] initWithFrame:CGRectZero];
-    _syncSwitch.on = YES;
-
-    for (UIView *v in @[ _country, _codeField, _numberField, _separator1, _separator2, _separator3, _syncLabel, _syncSwitch ]) {
-        [self.view addSubview:v];
-    }
+    for (UIView *v in @[ _phoneBackground, _country, _codeField, _numberField ]) [self.view addSubview:v];
     if (![NGTelegram hasCredentials]) {
         [self showError:@"В NGConfig.h не указаны NG_API_ID и NG_API_HASH. Получите их на my.telegram.org и пересоберите приложение."];
     }
@@ -373,25 +532,20 @@ static NSString *NGCountryForCode(NSString *code) {
     [_numberField becomeFirstResponder];
 }
 
-// phoneAndCountryNode: 115pt — the country row, then the code | number row.
-- (CGFloat)layoutContentFromY:(CGFloat)y width:(CGFloat)width {
-    CGFloat px = [NGTheme pixel];
-    BOOL compact = self.compact;
-    CGFloat rowH = compact ? 44.0f : 57.0f;
-    _separator1.frame = CGRectMake(NGLoginInset, y, width - NGLoginInset * 2.0f, px);
-    _country.frame = CGRectMake(NGLoginInset + 14.0f, y, width - NGLoginInset * 2.0f - 14.0f, rowH);
-    _separator2.frame = CGRectMake(NGLoginInset, y + rowH, width - NGLoginInset * 2.0f, px);
-    _codeField.frame = CGRectMake(NGLoginInset, y + rowH, 70.0f, rowH);
-    _separator3.frame = CGRectMake(NGLoginInset + 70.0f, y + rowH + 12.0f, px, rowH - 24.0f);
-    _numberField.frame = CGRectMake(NGLoginInset + 84.0f, y + rowH, width - NGLoginInset * 2.0f - 84.0f, rowH);
-    y += rowH * 2.0f + 1.0f;
-    _syncLabel.hidden = compact;
-    _syncSwitch.hidden = compact;
-    if (compact) return y;
-    y += 14.0f;
-    _syncLabel.frame = CGRectMake(NGLoginInset, y, width - NGLoginInset * 2.0f - 60.0f, 31.0f);
-    _syncSwitch.frame = CGRectMake(width - NGLoginInset - 51.0f, y, 51.0f, 31.0f);
-    return y + 31.0f;
+- (BOOL)wantsNextItem { return YES; }
+- (void)proceedTapped { if (self.proceed.enabled && !self.busy) [self submit]; }
+- (CGFloat)contentHeight { return 115.0f; }
+- (CGFloat)contentSpacingBefore { return 30.0f; }
+
+// PhoneAndCountryNode.layout(), the node 115pt high and the full width.
+- (void)layoutContentAtY:(CGFloat)y width:(CGFloat)width {
+    CGFloat inset = 24.0f, h = 115.0f;
+    _country.frame = CGRectMake(0, y, width, 67.0f);
+    CGSize arrow = _countryArrow.image.size;
+    _countryArrow.frame = CGRectMake(width - arrow.width - 24.0f - 3.0f, 16.0f + [NGTheme pixel], arrow.width, arrow.height);
+    _phoneBackground.frame = CGRectMake(0, y + h - 57.0f, width - inset, 57.0f);
+    _codeField.frame = CGRectMake(18.0f, y + h - 58.0f, 71.0f, 57.0f);
+    _numberField.frame = CGRectMake(107.0f, y + h - 58.0f, width - 96.0f - 8.0f - 24.0f, 57.0f);
 }
 
 - (BOOL)textField:(UITextField *)textField shouldChangeCharactersInRange:(NSRange)range replacementString:(NSString *)string {
@@ -410,16 +564,20 @@ static NSString *NGCountryForCode(NSString *code) {
 }
 
 - (void)fieldsChanged {
-    [_country setTitle:NGCountryForCode([self countryCode]) forState:UIControlStateNormal];
-    self.proceed.enabled = [NGTelegram hasCredentials] && [self countryCode].length > 0 && _numberField.text.length >= 5;
+    // countryFlagAndNameAttributedString: "<flag> <name>". iOS 6 draws only a
+    // few flag emoji, so the others show the name alone.
+    NSDictionary *flags = @{ @"7": @"🇷🇺", @"1": @"🇺🇸", @"49": @"🇩🇪", @"44": @"🇬🇧", @"33": @"🇫🇷", @"39": @"🇮🇹", @"34": @"🇪🇸" };
+    NSString *flag = flags[[self countryCode]];
+    NSString *name = NGCountryForCode([self countryCode]);
+    [_country setTitle:flag ? [NSString stringWithFormat:@"%@ %@", flag, name] : name forState:UIControlStateNormal];
+    [self setProceedEnabled:[NGTelegram hasCredentials] && [self countryCode].length > 0 && _numberField.text.length >= 5];
 }
 
 - (void)submit {
     NSString *phone = [[self countryCode] stringByAppendingString:_numberField.text ?: @""];
-    self.proceed.busy = YES;
-    [self showError:nil];
+    self.busy = YES;
     [[NGTelegram shared] sendCode:phone completion:^(NSString *hash, NSString *via, NSInteger length, NSString *error) {
-        self.proceed.busy = NO;
+        self.busy = NO;
         if (!hash) {
             if ([error isEqualToString:@"PHONE_NUMBER_INVALID"]) error = @"Неверный номер. Проверьте код страны и номер.";
             else if ([error hasPrefix:@"FLOOD_WAIT_"]) error = @"Слишком много попыток. Попробуйте позже.";
@@ -443,6 +601,6 @@ UIViewController *NGLoginScreen(void (^onLoggedIn)(void)) {
     NGPhoneController *phone = [NGPhoneController new];
     phone.onLoggedIn = onLoggedIn;
     UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:phone];
-    nav.navigationBarHidden = YES;
+    nav.navigationBarHidden = !NGIsNarrowScreen();
     return nav;
 }

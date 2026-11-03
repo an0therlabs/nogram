@@ -84,6 +84,7 @@ static int NGFloodSeconds(NSString *error) {
     BOOL _connectionInited;
     NSDictionary *_currentUser;
     BOOL _authorized;
+    BOOL _warmedUp;
     CFAbsoluteTime _floodUntil;            /* no calls before this (FLOOD_WAIT) */
     NSMutableDictionary *_fileDcRetryAt;   /* dc → CFAbsoluteTime; a failed DC is left alone for a while */
 }
@@ -341,9 +342,26 @@ static NSDictionary *NGParseUser(ngmt_reader *r) {
             self->_authorized = YES;
             self->_currentUser = user;
             [self save];
+            [self warmUp];
         }
         dispatch_async(dispatch_get_main_queue(), ^{ completion(user, error); });
     });
+}
+
+// What an official client asks first on a new session: help.getConfig and
+// updates.getState. The answers are not used yet.
+- (void)warmUp {
+    if (_warmedUp || !_authorized) return;
+    _warmedUp = YES;
+    uint32_t ids[2] = { 0xc4f9186b /* help.getConfig */, 0xedd4882a /* updates.getState */ };
+    for (int i = 0; i < 2; i++) {
+        ngmt_buf q = {0};
+        ngmt_put_int(&q, ids[i]);
+        NSString *error = nil;
+        [self call:&q error:&error];
+        ngmt_buf_free(&q);
+        if (!_authorized) return;
+    }
 }
 
 // The server ended this authorization: forget it and every per-DC key, and
@@ -568,6 +586,7 @@ static NSDictionary *NGIndexById(NSArray *objects) {
 
 - (void)loadDialogs:(void (^)(NSArray *, NSString *))completion {
     dispatch_async(_queue, ^{
+        [self warmUp];   /* once per launch, before anything else */
         ngmt_buf q = {0};
         ngmt_put_int(&q, 0xa0f4cb4f);   /* messages.getDialogs */
         ngmt_put_int(&q, 0);
@@ -827,6 +846,14 @@ static CGFloat NGMaxPixelsForKey(NSString *key) {
     /* After a failure, leave the DC alone for 5 minutes: every avatar on a
        screen would otherwise run its own key exchange + export/import. */
     if ([_fileDcRetryAt[@(dc)] doubleValue] > CFAbsoluteTimeGetCurrent()) { *error = @"datacenter backoff"; return NULL; }
+    /* Never move the authorization to another DC (auth.exportAuthorization +
+       importAuthorization). A session seconds old exporting itself to every
+       DC is exactly what a session thief does, and the account was logged
+       out everywhere seconds after each sign-in while this ran. Files on
+       other DCs show their stripped thumbnail instead. */
+    __block int homeDc = 0;
+    dispatch_sync(_queue, ^{ homeDc = self->_dc; });
+    if (dc != homeDc) { *error = @"file on another datacenter"; return NULL; }
     ngmt_session *made = [self makeFileSessionForDC:dc error:error];
     if (!made) _fileDcRetryAt[@(dc)] = @(CFAbsoluteTimeGetCurrent() + 300.0);
     else [_fileDcRetryAt removeObjectForKey:@(dc)];
