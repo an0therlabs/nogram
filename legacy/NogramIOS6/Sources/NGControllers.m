@@ -146,7 +146,9 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
     [self reloadRows];
     [self loadRemoteDialogs];
     [_refreshTimer invalidate];
-    _refreshTimer = [NSTimer scheduledTimerWithTimeInterval:10.0 target:self selector:@selector(loadRemoteDialogs) userInfo:nil repeats:YES];
+    /* No updates connection yet, so the list polls, but gently: 30 s, and
+       only while the app is in front. */
+    _refreshTimer = [NSTimer scheduledTimerWithTimeInterval:30.0 target:self selector:@selector(loadRemoteDialogs) userInfo:nil repeats:YES];
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
@@ -158,6 +160,7 @@ static void NGPrepareTable(UITableView *table, UIColor *background) {
 // With an account, the list is the account's dialogs (messages.getDialogs).
 - (void)loadRemoteDialogs {
     if (![NGTelegram shared].isAuthorized || _loading) return;
+    if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive) return;
     _loading = YES;
     [[NGTelegram shared] loadDialogs:^(NSArray *chats, NSString *error) {
         self->_loading = NO;

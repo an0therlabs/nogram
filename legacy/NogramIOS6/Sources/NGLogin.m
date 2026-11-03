@@ -75,6 +75,10 @@ static UIColor *NGPlaceholderColor(void) { return NGHex(0xc8c8ce); }   // list.i
 @property (nonatomic, strong) NGProceedButton *proceed;
 @property (nonatomic, copy) void (^onLoggedIn)(void);
 @property (nonatomic) CGFloat keyboardHeight;
+/* True when the keyboard leaves too little room (iPhone 4: 244pt):
+   the notice and optional rows hide and rows shrink so nothing goes
+   under the Continue button. */
+@property (nonatomic, readonly) BOOL compact;
 - (CGFloat)layoutContentFromY:(CGFloat)y width:(CGFloat)width;
 - (void)showError:(NSString *)error;
 @end
@@ -117,14 +121,36 @@ static UIColor *NGPlaceholderColor(void) { return NGHex(0xc8c8ce); }   // list.i
 
 - (CGFloat)layoutContentFromY:(CGFloat)y width:(CGFloat)width { return y; }
 
+- (BOOL)compact {
+    return self.view.bounds.size.height - _keyboardHeight < 330.0f;
+}
+
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     CGFloat w = self.view.bounds.size.width, h = self.view.bounds.size.height;
     CGFloat maxWidth = w - NGLoginInset * 2.0f;
-    CGFloat y = _keyboardHeight > 0 ? 16.0f : 44.0f;
+    BOOL compact = self.compact;
+    BOOL hasError = _errorLabel.text.length > 0;
+    CGFloat buttonH = compact ? 44.0f : 50.0f;
+    CGFloat buttonInset = compact ? 8.0f : NGLoginInset;
+    _proceed.layer.cornerRadius = buttonH / 2.0f;
+    _proceed.frame = CGRectMake(NGLoginInset, h - _keyboardHeight - buttonH - buttonInset, maxWidth, buttonH);
+
+    CGFloat y = compact ? 40.0f : (_keyboardHeight > 0 ? 44.0f : 64.0f);
+    _titleLabel.font = [NGTheme boldFont:compact ? 22.0f : 28.0f];
     CGSize titleSize = [NGTheme sizeOfText:_titleLabel.text font:_titleLabel.font width:maxWidth];
     _titleLabel.frame = CGRectMake(NGLoginInset, y, maxWidth, titleSize.height);
-    y += titleSize.height + 18.0f;
+    y += titleSize.height + (compact ? 6.0f : 18.0f);
+
+    /* Compact: the error takes the notice's place, so it is never under the button. */
+    _noticeLabel.hidden = compact;
+    if (compact) {
+        CGSize errorSize = hasError ? [NGTheme sizeOfText:_errorLabel.text font:_errorLabel.font width:maxWidth] : CGSizeZero;
+        _errorLabel.frame = CGRectMake(NGLoginInset, y, maxWidth, errorSize.height);
+        y += hasError ? errorSize.height + 6.0f : 4.0f;
+        [self layoutContentFromY:y width:w];
+        return;
+    }
     CGFloat noticeWidth = MIN(274.0f, w - 28.0f);
     CGSize noticeSize = [NGTheme sizeOfText:_noticeLabel.text font:_noticeLabel.font width:noticeWidth];
     _noticeLabel.frame = CGRectMake(floorf((w - noticeWidth) / 2.0f), y, noticeWidth, noticeSize.height);
@@ -132,7 +158,6 @@ static UIColor *NGPlaceholderColor(void) { return NGHex(0xc8c8ce); }   // list.i
     y = [self layoutContentFromY:y width:w];
     CGSize errorSize = [NGTheme sizeOfText:_errorLabel.text ?: @"" font:_errorLabel.font width:maxWidth];
     _errorLabel.frame = CGRectMake(NGLoginInset, y + 10.0f, maxWidth, errorSize.height);
-    _proceed.frame = CGRectMake(NGLoginInset, h - _keyboardHeight - 50.0f - NGLoginInset, maxWidth, 50.0f);
 }
 
 - (void)showError:(NSString *)error {
@@ -221,7 +246,7 @@ static UIColor *NGPlaceholderColor(void) { return NGHex(0xc8c8ce); }   // list.i
 }
 
 - (CGFloat)layoutContentFromY:(CGFloat)y width:(CGFloat)width {
-    CGFloat boxW = 40.0f, boxH = 52.0f, spacing = 8.0f;
+    CGFloat boxW = 40.0f, boxH = self.compact ? 44.0f : 52.0f, spacing = 8.0f;
     NSInteger n = _boxes.count;
     CGFloat total = n * boxW + (n - 1) * spacing;
     CGFloat x = floorf((width - total) / 2.0f);
@@ -351,14 +376,19 @@ static NSString *NGCountryForCode(NSString *code) {
 // phoneAndCountryNode: 115pt — the country row, then the code | number row.
 - (CGFloat)layoutContentFromY:(CGFloat)y width:(CGFloat)width {
     CGFloat px = [NGTheme pixel];
-    CGFloat rowH = 57.0f;
+    BOOL compact = self.compact;
+    CGFloat rowH = compact ? 44.0f : 57.0f;
     _separator1.frame = CGRectMake(NGLoginInset, y, width - NGLoginInset * 2.0f, px);
     _country.frame = CGRectMake(NGLoginInset + 14.0f, y, width - NGLoginInset * 2.0f - 14.0f, rowH);
     _separator2.frame = CGRectMake(NGLoginInset, y + rowH, width - NGLoginInset * 2.0f, px);
     _codeField.frame = CGRectMake(NGLoginInset, y + rowH, 70.0f, rowH);
     _separator3.frame = CGRectMake(NGLoginInset + 70.0f, y + rowH + 12.0f, px, rowH - 24.0f);
     _numberField.frame = CGRectMake(NGLoginInset + 84.0f, y + rowH, width - NGLoginInset * 2.0f - 84.0f, rowH);
-    y += 115.0f + 14.0f;
+    y += rowH * 2.0f + 1.0f;
+    _syncLabel.hidden = compact;
+    _syncSwitch.hidden = compact;
+    if (compact) return y;
+    y += 14.0f;
     _syncLabel.frame = CGRectMake(NGLoginInset, y, width - NGLoginInset * 2.0f - 60.0f, 31.0f);
     _syncSwitch.frame = CGRectMake(width - NGLoginInset - 51.0f, y, 51.0f, 31.0f);
     return y + 31.0f;

@@ -51,6 +51,26 @@ static NSString *NGDatacenterAddress(int dc, BOOL test) {
 @end
 
 static NSString *const NGStoreKey = @"ng.mtproto.account";
+NSString *const NGTelegramSessionEndedNotification = @"NGTelegramSessionEndedNotification";
+
+// 401s that mean this authorization is gone. SESSION_PASSWORD_NEEDED is a 401
+// too, and must not log out.
+static BOOL NGIsSessionEnded(NSString *error) {
+    static NSSet *ended;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        ended = [NSSet setWithObjects:@"AUTH_KEY_UNREGISTERED", @"AUTH_KEY_INVALID", @"SESSION_REVOKED", @"SESSION_EXPIRED",
+                 @"USER_DEACTIVATED", @"USER_DEACTIVATED_BAN", nil];
+    });
+    return [ended containsObject:error];
+}
+
+// FLOOD_WAIT_X / FLOOD_PREMIUM_WAIT_X → X seconds, else 0.
+static int NGFloodSeconds(NSString *error) {
+    if (![error hasPrefix:@"FLOOD_"]) return 0;
+    NSRange r = [error rangeOfString:@"_WAIT_"];
+    return r.location == NSNotFound ? 0 : MAX(1, [[error substringFromIndex:NSMaxRange(r)] intValue]);
+}
 
 @implementation NGTelegram {
     dispatch_queue_t _queue;
@@ -64,6 +84,8 @@ static NSString *const NGStoreKey = @"ng.mtproto.account";
     BOOL _connectionInited;
     NSDictionary *_currentUser;
     BOOL _authorized;
+    CFAbsoluteTime _floodUntil;            /* no calls before this (FLOOD_WAIT) */
+    NSMutableDictionary *_fileDcRetryAt;   /* dc → CFAbsoluteTime; a failed DC is left alone for a while */
 }
 
 + (instancetype)shared {
@@ -82,6 +104,7 @@ static NSString *const NGStoreKey = @"ng.mtproto.account";
         _queue = dispatch_queue_create("ng.mtproto", DISPATCH_QUEUE_SERIAL);
         _fileQueue = dispatch_queue_create("ng.mtproto.files", DISPATCH_QUEUE_SERIAL);
         _fileSessions = [NSMutableDictionary dictionary];
+        _fileDcRetryAt = [NSMutableDictionary dictionary];
         _imageCache = [NSCache new];
         _imageCache.countLimit = 300;
         _imageWaiters = [NSMutableDictionary dictionary];
@@ -145,13 +168,24 @@ static NSString *const NGStoreKey = @"ng.mtproto.account";
     [self save];
 }
 
+// The marketing name the Devices list shows ("iPhone 4"), from hw.machine.
+static NSString *NGDeviceName(NSString *machine) {
+    NSDictionary *names = @{ @"iPhone3,1": @"iPhone 4", @"iPhone3,2": @"iPhone 4", @"iPhone3,3": @"iPhone 4",
+                             @"iPhone4,1": @"iPhone 4S", @"iPhone5,1": @"iPhone 5", @"iPhone5,2": @"iPhone 5",
+                             @"iPhone5,3": @"iPhone 5c", @"iPhone5,4": @"iPhone 5c", @"iPhone2,1": @"iPhone 3GS",
+                             @"iPod4,1": @"iPod touch 4", @"iPod5,1": @"iPod touch 5",
+                             @"iPad2,1": @"iPad 2", @"iPad2,2": @"iPad 2", @"iPad2,3": @"iPad 2", @"iPad2,4": @"iPad 2",
+                             @"iPad3,1": @"iPad 3", @"iPad3,2": @"iPad 3", @"iPad3,3": @"iPad 3", @"iPad2,5": @"iPad mini" };
+    return names[machine] ?: (machine.length ? machine : @"iPhone");
+}
+
 // invokeWithLayer(layer, initConnection(api_id, device, system, app, langs, query))
 - (void)wrapQuery:(const ngmt_buf *)query into:(ngmt_buf *)out {
     struct utsname info;
     uname(&info);
-    NSString *device = [NSString stringWithUTF8String:info.machine];
+    NSString *device = NGDeviceName([NSString stringWithUTF8String:info.machine]);
     NSString *system = [@"iOS " stringByAppendingString:[UIDevice currentDevice].systemVersion ?: @""];
-    NSString *version = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"0.1";
+    NSString *version = [NSString stringWithFormat:@"%@ Nogram", [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"0.1"];
     ngmt_put_int(out, 0xda9b0d0d);
     ngmt_put_int(out, NG_API_LAYER);
     ngmt_put_int(out, 0xc1cd5ea9);
@@ -168,6 +202,11 @@ static NSString *const NGStoreKey = @"ng.mtproto.account";
 
 // Runs one query, reconnecting to the account's DC on *_MIGRATE_X.
 - (NSData *)call:(const ngmt_buf *)query error:(NSString **)error {
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (_floodUntil > now) {
+        *error = [NSString stringWithFormat:@"FLOOD_WAIT_%d", (int)ceil(_floodUntil - now)];
+        return nil;
+    }
     for (int attempt = 0; attempt < 3; attempt++) {
         NSString *connectError = [self ensureConnection];
         if (connectError) { *error = connectError; return nil; }
@@ -192,6 +231,9 @@ static NSString *const NGStoreKey = @"ng.mtproto.account";
                 [self switchToDatacenter:[[text substringFromIndex:NSMaxRange(migrate)] intValue]];
                 continue;
             }
+            int flood = NGFloodSeconds(text);
+            if (flood) _floodUntil = CFAbsoluteTimeGetCurrent() + flood;
+            if (code == 401 && NGIsSessionEnded(text)) [self sessionEnded];
             *error = text;
             return nil;
         }
@@ -302,6 +344,32 @@ static NSDictionary *NGParseUser(ngmt_reader *r) {
         }
         dispatch_async(dispatch_get_main_queue(), ^{ completion(user, error); });
     });
+}
+
+// The server ended this authorization: forget it and every per-DC key, and
+// let the UI go back to the login screen. Nothing retries with the dead key.
+- (void)sessionEnded {
+    BOOL wasAuthorized = _authorized;
+    _authorized = NO;
+    _currentUser = nil;
+    ngmt_disconnect(_session);
+    ngmt_session_free(_session);
+    _session = ngmt_session_new();
+    _connected = NO;
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:NGStoreKey];
+    for (int dc = 1; dc <= 5; dc++) {
+        [[NSUserDefaults standardUserDefaults] removeObjectForKey:[NSString stringWithFormat:@"ng.mtproto.dc%d", dc]];
+    }
+    [[NSUserDefaults standardUserDefaults] synchronize];
+    dispatch_async(_fileQueue, ^{
+        for (NSValue *v in self->_fileSessions.allValues) ngmt_session_free(v.pointerValue);
+        [self->_fileSessions removeAllObjects];
+    });
+    if (wasAuthorized) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [[NSNotificationCenter defaultCenter] postNotificationName:NGTelegramSessionEndedNotification object:self];
+        });
+    }
 }
 
 - (void)logOut {
@@ -715,11 +783,37 @@ static NSString *NGCachePath(NSString *key) {
     return [dir stringByAppendingPathComponent:[key stringByAppendingString:@".jpg"]];
 }
 
+// Decodes (and for avatars, shrinks) an image into a bitmap now, so the main
+// thread does not inflate a JPEG on every draw. CG bitmap contexts are safe
+// off the main thread on iOS 6.
+static UIImage *NGDecodedImage(UIImage *image, CGFloat maxPixels) {
+    CGImageRef cg = image.CGImage;
+    if (!cg) return image;
+    size_t w = CGImageGetWidth(cg), h = CGImageGetHeight(cg);
+    CGFloat scale = MIN(1.0f, maxPixels / (CGFloat)MAX(w, h));
+    size_t tw = MAX((size_t)1, (size_t)(w * scale)), th = MAX((size_t)1, (size_t)(h * scale));
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(NULL, tw, th, 8, 0, space, kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little);
+    CGColorSpaceRelease(space);
+    if (!ctx) return image;
+    CGContextSetInterpolationQuality(ctx, kCGInterpolationMedium);
+    CGContextDrawImage(ctx, CGRectMake(0, 0, tw, th), cg);
+    CGImageRef out = CGBitmapContextCreateImage(ctx);
+    CGContextRelease(ctx);
+    UIImage *result = [UIImage imageWithCGImage:out];
+    CGImageRelease(out);
+    return result;
+}
+
+static CGFloat NGMaxPixelsForKey(NSString *key) {
+    return [key hasPrefix:@"a"] ? 160.0f : 800.0f;   /* avatars are at most 80pt */
+}
+
 - (UIImage *)cachedImageForKey:(NSString *)key {
     UIImage *image = [_imageCache objectForKey:key];
     if (image) return image;
     NSData *data = [NSData dataWithContentsOfFile:NGCachePath(key)];
-    image = data ? [UIImage imageWithData:data] : nil;
+    image = data ? NGDecodedImage([UIImage imageWithData:data], NGMaxPixelsForKey(key)) : nil;
     if (image) [_imageCache setObject:image forKey:key];
     return image;
 }
@@ -729,6 +823,17 @@ static NSString *NGCachePath(NSString *key) {
 - (ngmt_session *)fileSessionForDC:(int)dc error:(NSString **)error {
     NSValue *existing = _fileSessions[@(dc)];
     if (existing) return existing.pointerValue;
+    if (!_authorized) { *error = @"not authorized"; return NULL; }
+    /* After a failure, leave the DC alone for 5 minutes: every avatar on a
+       screen would otherwise run its own key exchange + export/import. */
+    if ([_fileDcRetryAt[@(dc)] doubleValue] > CFAbsoluteTimeGetCurrent()) { *error = @"datacenter backoff"; return NULL; }
+    ngmt_session *made = [self makeFileSessionForDC:dc error:error];
+    if (!made) _fileDcRetryAt[@(dc)] = @(CFAbsoluteTimeGetCurrent() + 300.0);
+    else [_fileDcRetryAt removeObjectForKey:@(dc)];
+    return made;
+}
+
+- (ngmt_session *)makeFileSessionForDC:(int)dc error:(NSString **)error {
     __block int homeDc = 0;
     __block NSData *homeKey = nil;
     __block uint64_t homeSalt = 0;
@@ -815,7 +920,18 @@ static NSString *NGCachePath(NSString *key) {
             if (rc != NGMT_OK) {
                 *error = rc == NGMT_RPC_ERROR ? [NSString stringWithUTF8String:message] : [NSString stringWithUTF8String:ngmt_last_error(s)];
                 ngmt_buf_free(&result);
-                if (rc == NGMT_RPC_ERROR) return nil;
+                if (rc == NGMT_RPC_ERROR) {
+                    /* A dead imported key, or a flood wait: drop the session and
+                       leave this DC alone, rather than retry per image. */
+                    if (code == 401 || code == 420) {
+                        ngmt_session_free(s);
+                        [_fileSessions removeObjectForKey:@(dc)];
+                        if (code == 401) [[NSUserDefaults standardUserDefaults] removeObjectForKey:[NSString stringWithFormat:@"ng.mtproto.dc%d", dc]];
+                        int wait = MAX(300, NGFloodSeconds(*error));
+                        _fileDcRetryAt[@(dc)] = @(CFAbsoluteTimeGetCurrent() + wait);
+                    }
+                    return nil;
+                }
                 failed = YES;
                 break;
             }
@@ -835,6 +951,7 @@ static NSString *NGCachePath(NSString *key) {
             [file setLength:0];
         }
     }
+    _fileDcRetryAt[@(dc)] = @(CFAbsoluteTimeGetCurrent() + 60.0);   /* the DC is unreachable for now */
     return nil;
 }
 
@@ -848,7 +965,12 @@ static NSString *NGCachePath(NSString *key) {
         NSString *error = nil;
         NSData *data = [self downloadFromDC:dc location:location error:&error];
         UIImage *image = data ? [UIImage imageWithData:data] : nil;
-        if (image) [data writeToFile:NGCachePath(key) atomically:YES];
+        if (image) {
+            image = NGDecodedImage(image, NGMaxPixelsForKey(key));
+            /* Keep the shrunk copy on disk, so later launches decode less. */
+            NSData *small = UIImageJPEGRepresentation(image, 0.85f) ?: data;
+            [small writeToFile:NGCachePath(key) atomically:YES];
+        }
         dispatch_async(dispatch_get_main_queue(), ^{
             NSArray *list = self->_imageWaiters[key];
             [self->_imageWaiters removeObjectForKey:key];
