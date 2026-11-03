@@ -4,6 +4,11 @@
 // one permanent auth key (kept in NSUserDefaults), calls made in order on a
 // serial queue, completions on the main queue. Follows *_MIGRATE_X errors to
 // the account's DC.
+// Posted on the main queue when the server ends this session (401:
+// AUTH_KEY_UNREGISTERED, SESSION_REVOKED, USER_DEACTIVATED, …). The account is
+// forgotten locally and every call fails until the user signs in again.
+extern NSString *const NGTelegramSessionEndedNotification;
+
 @interface NGTelegram : NSObject
 
 + (instancetype)shared;

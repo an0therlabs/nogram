@@ -267,7 +267,29 @@ UIImage *NGBadgeBackgroundImage(UIColor *color, CGFloat diameter) {
 
 #pragma mark - Settings icons
 
+static UIImage *NGSettingsIconUncached(NSString *assetName, NSArray *backgroundColors);
+
+// Each icon is generated once: a settings screen asked for every one of them
+// again on every cell reuse, which on an iPhone 4 was a visible stutter.
 UIImage *NGSettingsIcon(NSString *assetName, NSArray *backgroundColors) {
+    static NSCache *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ cache = [NSCache new]; });
+    NSMutableString *key = [NSMutableString stringWithString:assetName ?: @""];
+    for (UIColor *c in backgroundColors) {
+        CGFloat r = 0, g = 0, b = 0, a = 0;
+        if (![c getRed:&r green:&g blue:&b alpha:&a]) { [c getWhite:&r alpha:&a]; g = b = r; }
+        [key appendFormat:@"|%.3f,%.3f,%.3f,%.3f", r, g, b, a];
+    }
+    UIImage *image = [cache objectForKey:key];
+    if (!image) {
+        image = NGSettingsIconUncached(assetName, backgroundColors);
+        if (image) [cache setObject:image forKey:key];
+    }
+    return image;
+}
+
+static UIImage *NGSettingsIconUncached(NSString *assetName, NSArray *backgroundColors) {
     UIImage *gradientImage = [UIImage imageNamed:@"settings_gradient"];
     UIImage *backdropImage = [UIImage imageNamed:@"settings_backdrop"];
     UIImage *image = [UIImage imageNamed:assetName];

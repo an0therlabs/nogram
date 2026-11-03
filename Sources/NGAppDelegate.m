@@ -13,14 +13,28 @@
     self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
     self.window.backgroundColor = [UIColor whiteColor];
 
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(sessionEnded) name:NGTelegramSessionEndedNotification object:nil];
     if ([NGTelegram shared].isAuthorized) {
         [self showMain];
     } else {
-        __weak NGAppDelegate *weakSelf = self;
-        self.window.rootViewController = NGLoginScreen(^{ [weakSelf showMain]; });
+        [self showLogin];
     }
     [self.window makeKeyAndVisible];
     return YES;
+}
+
+- (void)showLogin {
+    __weak NGAppDelegate *weakSelf = self;
+    self.window.rootViewController = NGLoginScreen(^{ [weakSelf showMain]; });
+}
+
+// The server ended the session (it was terminated from another device, or
+// the key was revoked): stop everything and go back to the login screen.
+- (void)sessionEnded {
+    [self showLogin];
+    [[[UIAlertView alloc] initWithTitle:@"Сеанс завершён"
+                                message:@"Telegram завершил этот сеанс. Войдите снова."
+                               delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show];
 }
 
 // The signed-in account's name and phone replace the demo profile; the chat

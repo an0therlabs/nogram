@@ -419,6 +419,8 @@ static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
     NGMessage *_animatingMessage;
     CGRect _sourceFieldFrame;
     NSTimer *_pollTimer;
+    NSString *_historySignature;
+    int32_t _readUpTo;
     BOOL _loadingHistory;
     NSMutableArray *_pendingSends;
 }
@@ -656,14 +658,21 @@ static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
     if (_chat.peerKey) {
         [self loadHistory];
         [_pollTimer invalidate];
-        _pollTimer = [NSTimer scheduledTimerWithTimeInterval:4.0 target:self selector:@selector(loadHistory) userInfo:nil repeats:YES];
+        _pollTimer = [NSTimer scheduledTimerWithTimeInterval:10.0 target:self selector:@selector(loadHistory) userInfo:nil repeats:YES];
     }
+}
+
+static NSString *NGHistorySignature(NSArray *messages) {
+    NSMutableString *s = [NSMutableString string];
+    for (NGMessage *m in messages) [s appendFormat:@"%d:%d:%lu,", m.remoteId, (int)m.status, (unsigned long)m.text.hash];
+    return s;
 }
 
 // A server chat: messages.getHistory now and every few seconds while open
 // (no updates connection yet), keeping messages still being sent at the end.
 - (void)loadHistory {
-    if (_loadingHistory) return;
+    if (_loadingHistory || ![NGTelegram shared].isAuthorized) return;
+    if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive) return;
     _loadingHistory = YES;
     __weak NGChatController *weakSelf = self;
     NGChat *chat = _chat;
@@ -674,9 +683,13 @@ static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
         if (!messages) return;
         int32_t lastOld = ((NGMessage *)[chat.messages lastObject]).remoteId;
         int32_t lastNew = ((NGMessage *)[messages lastObject]).remoteId;
-        BOOL changed = messages.count != chat.messages.count - strongSelf->_pendingSends.count || lastOld != lastNew || chat.messages.count == 0;
-        for (NGMessage *m in messages) if (m.outgoing && m.status == NGMessageStatusSent) changed = YES;
+        /* Redraw only when ids, edits or read marks differ: the old check was
+           always true while an outgoing message was unread, which rebuilt the
+           whole table and sent readHistory every poll. */
+        NSString *signature = NGHistorySignature(messages);
+        BOOL changed = ![signature isEqualToString:strongSelf->_historySignature] || chat.messages.count == 0;
         if (!changed) return;
+        strongSelf->_historySignature = signature;
         NSMutableArray *merged = [messages mutableCopy];
         [merged addObjectsFromArray:strongSelf->_pendingSends ?: @[]];
         chat.messages = merged;
@@ -684,7 +697,10 @@ static CGFloat NGMaximumWidth(CGFloat width, BOOL avatarSpace) {
         [strongSelf buildRows];
         [strongSelf->_table reloadData];
         if (atBottom || lastOld == 0) [strongSelf scrollToBottomAnimated:lastOld != 0];
-        [[NGTelegram shared] markRead:chat maxId:lastNew];
+        if (lastNew > strongSelf->_readUpTo) {
+            strongSelf->_readUpTo = lastNew;
+            [[NGTelegram shared] markRead:chat maxId:lastNew];
+        }
     }];
 }
 

@@ -1,3 +1,4 @@
+#import <sys/sysctl.h>
 #import "NGWallpaper.h"
 #import "NGCurves.h"
 #import <QuartzCore/QuartzCore.h>
@@ -156,9 +157,31 @@ static void NGGradientImageSize(CGSize size, int *w, int *h) {
     CGSize size = self.bounds.size;
     if (size.width < 1 || size.height < 1 || CGSizeEqualToSize(size, _validSize)) return;
     _validSize = size;
-    CGPoint positions[4];
-    NGPositionsForPhase(_phase, positions);
-    _imageView.image = [self composeWithPositions:positions size:size scale:0];
+    /* The composite (a full-screen soft-light pass) is the same for every
+       chat with this size and phase: build it once and share it. */
+    static NSCache *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ cache = [NSCache new]; cache.countLimit = 4; });
+    NSString *key = [NSString stringWithFormat:@"%ld|%.0fx%.0f", (long)_phase, size.width, size.height];
+    UIImage *image = [cache objectForKey:key];
+    if (!image) {
+        CGPoint positions[4];
+        NGPositionsForPhase(_phase, positions);
+        image = [self composeWithPositions:positions size:size scale:0];
+        if (image) [cache setObject:image forKey:key];
+    }
+    _imageView.image = image;
+}
+
+// A single-core device (iPhone 4, A4) cannot compose ~9 full-screen frames
+// per sent message without stalling the send; the wallpaper stays still there.
+static BOOL NGCanAnimateWallpaper(void) {
+    static int cpus = 0;
+    if (!cpus) {
+        size_t len = sizeof(cpus);
+        if (sysctlbyname("hw.ncpu", &cpus, &len, NULL, 0) != 0 || cpus < 1) cpus = 1;
+    }
+    return cpus > 1;
 }
 
 // updateLayout(size:transition:extendAnimation: false, backwards: false) for
@@ -166,7 +189,7 @@ static void NGGradientImageSize(CGSize size, int *w, int *h) {
 // frames sampled along the transition's curve, played with linear
 // interpolation.
 - (void)animateEventWithDuration:(NSTimeInterval)duration {
-    if (_animating || _validSize.width < 1) return;
+    if (_animating || _validSize.width < 1 || !NGCanAnimateWallpaper()) return;
     NSInteger previousPhase = _phase;
     _phase = _phase == 0 ? 7 : _phase - 1;
 
